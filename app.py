@@ -204,51 +204,71 @@ display_name = name.strip() if name.strip() else 'Anonym'
 # Formative-Jahre-Bias + Signifikanz
 formative_stats = compute_formative_years_stats(df, birth_year)
 
-# ── Layout ────────────────────────────────────────────────────────
-col_left, col_right = st.columns([1, 1], gap='large')
+# ── Achievements (ganz oben) ─────────────────────────────────────
+all_ach = progressive + bonus + genre_ach + insider
+if all_ach:
+    st.subheader(f'🏅 Achievements ({len(all_ach)})')
+    cols = st.columns(min(len(all_ach), 3))
+    for i, a in enumerate(all_ach):
+        with cols[i % 3]:
+            st.markdown(
+                f'<div style="border:1px solid #333;border-radius:8px;padding:12px;margin:4px">' +
+                f'<div style="font-size:2em">{a["emoji"]}</div>' +
+                f'<b>{a["name"]}</b><br>' +
+                f'<small>{a["desc"]}</small>' +
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
-with col_left:
+# ── Hauptlayout ───────────────────────────────────────────────────
+st.divider()
+col_left, col_right = st.columns([1.1, 0.9], gap='large')
+
+# ── RECHTS: Übersicht + Prägende Jahre + Radar ────────────────────
+with col_right:
     # Basisdaten
     st.metric('Filme bewertet', len(df))
     m1, m2, m3 = st.columns(3)
     m1.metric('Eigene Ø', f'{df["user_rating"].mean():.2f}')
     if df['imdb_rating'].notna().sum() > 10:
-        bias = (df['user_rating'] - df['imdb_rating']).mean()
+        _bias_val = (df['user_rating'] - df['imdb_rating']).mean()
         m2.metric('IMDB Ø', f'{df["imdb_rating"].mean():.2f}')
-        m3.metric('Bias', f'{bias:+.2f}')
+        m3.metric('Bias', f'{_bias_val:+.2f}')
 
-    # Formative-Jahre-Bias anzeigen
+    # Prägende Jahre
     if formative_stats is not None:
         fs = formative_stats
         st.divider()
-        bias_label = 'Nostalgiker 💝' if fs['bias'] > 0 else 'Antichrist 😈'
-        sig_text = '(statistisch signifikant ✓)' if fs['significant'] else '(nicht signifikant)'
-        sig_color = '#4caf50' if fs['significant'] else '#888888'
-        method_note = '(IMDB-bereinigt)' if fs.get('has_imdb') else '(Rohrating)'
-        st.markdown(f"**🎞️ Prägende Jahre {fs['form_start']}–{fs['form_end']}** {method_note}")
+        sig_text = '(signifikant ✓)' if fs['significant'] else '(nicht signifikant)'
+        method_note = 'IMDB-bereinigt' if fs.get('has_imdb') else 'Rohrating'
+        st.markdown(f"**🎞️ Prägende Jahre {fs['form_start']}–{fs['form_end']}** _{method_note}_")
         st.caption(
-            f"Positive Zahl = du bewertest Filme aus deinen prägenden Jahren "
-            f"**besser** als den Rest deiner Sammlung. {method_note}: Bias wird relativ "
-            f"zum IMDB-Schnitt gemessen, um Ären-Unterschiede herauszurechnen."
+            f"Positive Zahl = du bewertest Filme aus deinen prägenden Jahren **besser** als den Rest. "
+            f"Bias wird relativ zum IMDB-Schnitt gemessen, um Ären-Unterschiede herauszurechnen."
         )
         mc1, mc2, mc3 = st.columns(3)
-        mc1.metric('Bias', f"{fs['bias']:+.2f}", help='Formativfilm-Ø minus Rest-Ø. Positiv = Nostalgiker.')
+        mc1.metric('Bias', f"{fs['bias']:+.2f}", help='Positiv = Nostalgiker')
         mc2.metric('Formative Filme', fs['n_form'])
         mc3.metric('p-Wert', f"{fs['p_value']:.3f}")
         st.caption(
-            f"Ø formative Filme: {fs['form_avg']:.2f} | Ø restliche Filme: {fs['nonform_avg']:.2f} | "
+            f"Ø formativ: {fs['form_avg']:.2f} | Ø Rest: {fs['nonform_avg']:.2f} | "
             f"t={fs['t_stat']:.2f} | "
             f":{'green' if fs['significant'] else 'gray'}[{sig_text}] — "
-            f"{'Der Bias ist statistisch belastbar.' if fs['significant'] else 'Zu wenig Daten oder Effekt zu klein.'}"
+            f"{'Statistisch belastbar.' if fs['significant'] else 'Effekt zu klein oder zu wenig Daten.'}"
         )
-        # Formative-Jahre-Chart
         if birth_year:
             _form_chart = '/tmp/formative_chart.png'
             save_formative_years_chart(df, birth_year, _form_chart)
             st.image(_form_chart, use_container_width=True)
 
-    # Dimensionen mit je eigenem Chart
+    # Radar Chart
     st.divider()
+    radar_path = '/tmp/radar_tmp.png'
+    save_radar_chart(display_name, dims, radar_path)
+    st.image(radar_path, use_container_width=True)
+
+# ── LINKS: Persönlichkeitsprofil mit Dimension-Charts ────────────
+with col_left:
     st.subheader('🧠 Persönlichkeitsprofil')
     dim_order = ['bewertungsstil', 'meinungsstaerke', 'geschmacksbreite', 'epoche']
     dim_labels = {
@@ -265,29 +285,6 @@ with col_left:
             _dim_path = f'/tmp/dim_{key}.png'
             save_single_dimension_chart(key, df, dims, _dim_path)
             st.image(_dim_path, use_container_width=True)
-
-with col_right:
-    # Radar Chart
-    radar_path = '/tmp/radar_tmp.png'
-    save_radar_chart(display_name, dims, radar_path)
-    st.image(radar_path, use_container_width=True)
-
-# ── Achievements ──────────────────────────────────────────────────
-all_ach = progressive + bonus + genre_ach + insider
-if all_ach:
-    st.divider()
-    st.subheader(f'🏅 Achievements ({len(all_ach)})')
-    cols = st.columns(min(len(all_ach), 3))
-    for i, a in enumerate(all_ach):
-        with cols[i % 3]:
-            st.markdown(
-                f'<div style="border:1px solid #333;border-radius:8px;padding:12px;margin:4px">'
-                f'<div style="font-size:2em">{a["emoji"]}</div>'
-                f'<b>{a["name"]}</b><br>'
-                f'<small>{a["desc"]}</small>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
 
 # ── Genre-Tabelle ─────────────────────────────────────────────────
 if 'genre_all' in topflop and not topflop['genre_all'].empty:
@@ -318,18 +315,39 @@ if 'genre_all' in topflop and not topflop['genre_all'].empty:
     )
 
 # ── Regisseure ────────────────────────────────────────────────────
+# ── Regisseure ────────────────────────────────────────────────────
 if 'dir_all' in topflop and not topflop['dir_all'].empty:
     st.divider()
     st.subheader('🎥 Regisseure')
     dcol1, dcol2 = st.columns(2)
+
+    def _dir_films(director):
+        if 'directors' not in df.columns:
+            return pd.DataFrame()
+        mask = df['directors'].str.contains(director, na=False, regex=False)
+        cols_show = [c for c in ['title', 'year', 'user_rating', 'imdb_rating'] if c in df.columns]
+        result = df[mask][cols_show].copy()
+        result = result.rename(columns={
+            'title': 'Titel', 'year': 'Jahr',
+            'user_rating': 'Eigene', 'imdb_rating': 'IMDB'
+        }).sort_values('Eigene', ascending=False)
+        return result
+
     with dcol1:
         st.markdown('**Top 3**')
         for d, row in topflop['dir_top'].head(3).iterrows():
-            st.markdown(f'`{d}` — Ø {row["user_avg"]:.1f} (n={int(row["n"])})')
+            with st.expander(f'{d}  —  Ø {row["user_avg"]:.1f}  ({int(row["n"])} Filme)'):
+                _films = _dir_films(d)
+                if not _films.empty:
+                    st.dataframe(_films.style.format(precision=1), use_container_width=True, hide_index=True)
+
     with dcol2:
         st.markdown('**Flop 3**')
         for d, row in topflop['dir_flop'].head(3).iterrows():
-            st.markdown(f'`{d}` — Ø {row["user_avg"]:.1f} (n={int(row["n"])})')
+            with st.expander(f'{d}  —  Ø {row["user_avg"]:.1f}  ({int(row["n"])} Filme)'):
+                _films = _dir_films(d)
+                if not _films.empty:
+                    st.dataframe(_films.style.format(precision=1), use_container_width=True, hide_index=True)
 
 # ── Footer ────────────────────────────────────────────────────────
 st.divider()
