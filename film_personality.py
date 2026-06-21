@@ -455,6 +455,13 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
     ach = []
     overall_avg = df['user_rating'].mean()
 
+    # ── The real OG ──────────────────────────────────────────────────
+    if 'year' in df.columns and df['year'].notna().sum() >= 10:
+        _med = int(df['year'].dropna().median())
+        if _med < 2000:
+            ach.append({'emoji': '📽️', 'name': 'The real OG',
+                        'desc': f'Dein Medianjahr ist {_med} — du schaust hauptsächlich Filme aus dem letzten Jahrhundert. Old school ist keine Einstellung, es ist eine Lebensweise.'})
+
     # ── hasst Filme mehr als David Hain 😉 ──────────────────────────
     if overall_avg <= 5.5:
         ach.append({'emoji': '😬', 'name': 'hasst Filme mehr als David Hain 😉',
@@ -754,8 +761,18 @@ def compute_formative_years_stats(df, birth_year):
 
     form_start = birth_year
     form_end   = birth_year + 20
-    form    = df[df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
-    nonform = df[~df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
+
+    # IMDB-relativ: bereinigt um allgemeine Ären-Unterschiede in IMDB-Bewertungen
+    has_imdb = 'imdb_rating' in df.columns and df['imdb_rating'].notna().sum() > len(df) * 0.3
+    if has_imdb:
+        vals = (df['user_rating'] - df['imdb_rating'])
+        form    = vals[df['year'].between(form_start, form_end - 1)].dropna()
+        nonform = vals[~df['year'].between(form_start, form_end - 1)].dropna()
+        method  = 'IMDB-relativ'
+    else:
+        form    = df[df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
+        nonform = df[~df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
+        method  = 'Rohrating'
 
     if len(form) < 5 or len(nonform) < 5:
         return None
@@ -791,8 +808,158 @@ def compute_formative_years_stats(df, birth_year):
         'significant': p_value < 0.05,
         'form_start':  form_start,
         'form_end':    form_end - 1,
+        'method':      method,
+        'has_imdb':    has_imdb,
     }
 
+
+
+
+def save_formative_years_chart(df, birth_year, out_path):
+    """
+    Balkendiagramm: Ø(user_rating − imdb_rating) pro Jahr.
+    Formative Jahre (birth_year bis +19) rot hervorgehoben.
+    Fällt kein IMDB-Rating vor, wird Ø user_rating verwendet.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    if 'year' not in df.columns or df['year'].notna().sum() < 5:
+        return
+
+    has_imdb = 'imdb_rating' in df.columns and df['imdb_rating'].notna().sum() > len(df) * 0.3
+    if has_imdb:
+        df = df.copy()
+        df['_val'] = df['user_rating'] - df['imdb_rating']
+        ylabel = 'Eigene − IMDB Ø'
+    else:
+        df = df.copy()
+        df['_val'] = df['user_rating']
+        ylabel = 'Eigene Bewertung Ø'
+
+    yearly = df.dropna(subset=['year', '_val']).copy()
+    yearly['year'] = yearly['year'].astype(int)
+    yearly = yearly.groupby('year')['_val'].mean()
+    years  = yearly.index.values
+    vals   = yearly.values
+
+    form_start, form_end = birth_year, birth_year + 19
+    colors = ['#e84545' if form_start <= y <= form_end else '#3a3a6a' for y in years]
+
+    fig, ax = plt.subplots(figsize=(8, 3))
+    fig.patch.set_facecolor('#1a1a2e')
+    ax.set_facecolor('#16213e')
+
+    ax.bar(years, vals, color=colors, alpha=0.85, width=0.85, zorder=3)
+    if has_imdb:
+        ax.axhline(0, color='white', lw=0.8, alpha=0.4, zorder=2)
+    ax.axvline(form_start - 0.5, color='#e84545', lw=1, ls='--', alpha=0.5)
+    ax.axvline(form_end   + 0.5, color='#e84545', lw=1, ls='--', alpha=0.5)
+    ax.text((form_start + form_end) / 2, ax.get_ylim()[1] * 0.92,
+            f'Prägende Jahre', ha='center', color='#e84545', fontsize=8)
+
+    ax.set_ylabel(ylabel, color='#888888', fontsize=8)
+    ax.tick_params(colors='#888888', labelsize=8, length=0)
+    for spine in ax.spines.values():
+        spine.set_edgecolor('#2a2a4a')
+    ax.yaxis.grid(True, color='#2a2a4a', linewidth=0.5, alpha=0.6, zorder=0)
+
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+    plt.close(fig)
+
+
+def save_single_dimension_chart(key, df, dims, out_path):
+    """
+    Einzelner Chart für eine Persönlichkeitsdimension (größer als im 2x2-Grid).
+    key: 'bewertungsstil' | 'meinungsstaerke' | 'geschmacksbreite' | 'epoche'
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    COLOR  = '#e84545'
+    COLOR_P = '#4caf50'
+    COLOR_N = '#f44336'
+    BG     = '#16213e'
+    GRID   = '#2a2a4a'
+    TEXT   = '#eaeaea'
+    SUBTLE = '#888888'
+
+    fig, ax = plt.subplots(figsize=(7, 3.2))
+    fig.patch.set_facecolor('#1a1a2e')
+    ax.set_facecolor(BG)
+    pole = dims.get(key, {}).get('pole', '')
+
+    def _style(title, xlabel='', ylabel=''):
+        ax.set_facecolor(BG)
+        ax.set_title(title, color=TEXT, fontsize=10, fontweight='bold', pad=6)
+        ax.tick_params(colors=SUBTLE, labelsize=8, length=0)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(GRID)
+        if xlabel: ax.set_xlabel(xlabel, color=SUBTLE, fontsize=8)
+        if ylabel: ax.set_ylabel(ylabel, color=SUBTLE, fontsize=8)
+        ax.yaxis.grid(True, color=GRID, linewidth=0.5, alpha=0.6, zorder=0)
+
+    if key == 'bewertungsstil':
+        counts = [(df['user_rating'] == i).sum() for i in range(1, 11)]
+        ax.bar(range(1, 11), counts, color=COLOR, alpha=0.85, width=0.72, zorder=3)
+        mean_r = df['user_rating'].mean()
+        ax.axvline(mean_r, color='white', lw=1.5, ls='--', alpha=0.85, zorder=5)
+        ymax = max(counts) if counts else 1
+        ax.text(mean_r + 0.15, ymax * 0.9, f'Ø {mean_r:.1f}', color='white', fontsize=8.5)
+        ax.set_xticks(range(1, 11))
+        _style(f'Bewertungsstil — {pole}', 'Rating (1–10)', 'Filme')
+
+    elif key == 'meinungsstaerke':
+        diff = (df['user_rating'] - df['imdb_rating']).dropna()
+        if len(diff) > 0:
+            bins = [x - 0.5 for x in range(-9, 11)]
+            ax.hist(diff, bins=bins, color=COLOR, alpha=0.85, edgecolor=BG, zorder=3)
+            ax.axvline(0, color='white', lw=1.2, ls='--', alpha=0.55, zorder=4)
+            ax.axvline(diff.mean(), color='#ffd700', lw=1.8, alpha=0.9, zorder=5)
+            ymax2 = ax.get_ylim()[1]
+            ax.text(diff.mean() + 0.2, ymax2 * 0.85, f'Ø {diff.mean():+.2f}', color='#ffd700', fontsize=8.5)
+            ax.text(0.97, 0.93, f'σ={diff.std():.2f}', transform=ax.transAxes,
+                    color='#aaaaaa', fontsize=8, ha='right', va='top')
+        _style(f'Meinungsstärke — {pole}', 'Eigene − IMDB', 'Filme')
+
+    elif key == 'geschmacksbreite':
+        gdf = explode_genres(df)
+        if not gdf.empty:
+            overall_avg = df['user_rating'].mean()
+            gs = gdf.groupby('genre').agg(n=('user_rating','count'), avg=('user_rating','mean'))
+            gs = gs[gs['n'] >= 5].copy()
+            gs['diff'] = gs['avg'] - overall_avg
+            gs = gs.sort_values('diff').tail(12)
+            colors = [COLOR_P if v >= 0 else COLOR_N for v in gs['diff']]
+            ax.barh(range(len(gs)), gs['diff'].values, color=colors, alpha=0.85, zorder=3)
+            ax.xaxis.grid(True, color=GRID, linewidth=0.5, alpha=0.6, zorder=0)
+            ax.yaxis.grid(False)
+            ax.set_yticks(range(len(gs)))
+            ax.set_yticklabels(gs.index, fontsize=8, color=TEXT)
+            ax.axvline(0, color='white', lw=1, alpha=0.5, zorder=4)
+        _style(f'Geschmacksbreite — {pole}', 'Diff. zu eigenem Ø', '')
+
+    elif key == 'epoche':
+        if 'year' in df.columns:
+            years = df['year'].dropna()
+            dc = (years // 10 * 10).astype(int).value_counts().sort_index()
+            ax.bar(dc.index, dc.values, width=8.5, color=COLOR, alpha=0.85, zorder=3)
+            median_y = int(years.median())
+            ax.axvline(median_y, color='white', lw=1.5, ls='--', alpha=0.85, zorder=5)
+            ax.text(median_y + 2, dc.values.max() * 0.88,
+                    'Median ' + str(median_y), color='white', fontsize=8.5)
+            ax.set_xticks(dc.index)
+            ax.set_xticklabels([f"{d}s" for d in dc.index], rotation=35, ha='right', fontsize=7.5)
+        _style(f'Lieblingsepoche — {pole}', '', 'Filme')
+
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+    plt.close(fig)
 
 
 def save_dimension_detail_charts(name, df, dims, out_path):
@@ -962,7 +1129,7 @@ def save_radar_chart(name, dims, out_path):
     counter_labels = ['Mild', 'Diplomat', 'Spezialist', 'Klassiker']
     for angle, clabel in zip(angles[:-1], counter_labels):
         ax.text(angle, 0.08, clabel, ha='center', va='center',
-                fontsize=7, color='grey', style='italic')
+                fontsize=10, color='grey')
 
     ax.fill(angles, scores_plot, color='#e84545', alpha=0.25)
     ax.plot(angles, scores_plot, color='#e84545', lw=2.5)

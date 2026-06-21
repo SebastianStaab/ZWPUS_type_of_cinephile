@@ -25,8 +25,10 @@ from film_personality import (
     compute_dimensions, compute_bonus_achievements,
     compute_genre_achievements, compute_insider_achievements,
     compute_progressive_achievements, compute_top_flop,
-    save_radar_chart, save_dimension_detail_charts, compute_formative_years_stats,
+    save_radar_chart, save_single_dimension_chart,
+    save_formative_years_chart, compute_formative_years_stats,
 )
+
 
 # ── Cache-Warming (Background) ───────────────────────────────────
 _cache_warmed   = False
@@ -152,6 +154,8 @@ if not uploaded:
 # ── Daten laden ───────────────────────────────────────────────────
 api_key    = st.session_state.get('tmdb_key', '')
 cache_path = os.path.join(os.path.dirname(__file__), 'tmdb_cache.json')
+_script_dir_early = os.path.dirname(os.path.abspath(__file__))
+_start_cache_warming(api_key, _script_dir_early, cache_path)
 
 # Datei in temporären Pfad schreiben
 tmp_path = '/tmp/ratings_upload.csv'
@@ -185,8 +189,6 @@ with st.spinner('Lade Ratings...'):
 script_dir = os.path.dirname(os.path.abspath(__file__))
 david_df, robert_df = load_david_robert(script_dir)
 
-# Cache mit David/Robert-Filmen vorwärmen (einmalig im Hintergrund)
-_start_cache_warming(api_key, script_dir, cache_path)
 
 # ── Profil berechnen ──────────────────────────────────────────────
 with st.spinner('Berechne Profil...'):
@@ -222,7 +224,13 @@ with col_left:
         bias_label = 'Nostalgiker 💝' if fs['bias'] > 0 else 'Antichrist 😈'
         sig_text = '(statistisch signifikant ✓)' if fs['significant'] else '(nicht signifikant)'
         sig_color = '#4caf50' if fs['significant'] else '#888888'
-        st.markdown(f"**🎞️ Prägenden Jahre ({fs['form_start']}–{fs['form_end']})**")
+        method_note = '(IMDB-bereinigt)' if fs.get('has_imdb') else '(Rohrating)'
+        st.markdown(f"**🎞️ Prägende Jahre {fs['form_start']}–{fs['form_end']}** {method_note}")
+        st.caption(
+            f"Positive Zahl = du bewertest Filme aus deinen prägenden Jahren "
+            f"**besser** als den Rest deiner Sammlung. {method_note}: Bias wird relativ "
+            f"zum IMDB-Schnitt gemessen, um Ären-Unterschiede herauszurechnen."
+        )
         mc1, mc2, mc3 = st.columns(3)
         mc1.metric('Bias', f"{fs['bias']:+.2f}", help='Formativfilm-Ø minus Rest-Ø. Positiv = Nostalgiker.')
         mc2.metric('Formative Filme', fs['n_form'])
@@ -233,8 +241,13 @@ with col_left:
             f":{'green' if fs['significant'] else 'gray'}[{sig_text}] — "
             f"{'Der Bias ist statistisch belastbar.' if fs['significant'] else 'Zu wenig Daten oder Effekt zu klein.'}"
         )
+        # Formative-Jahre-Chart
+        if birth_year:
+            _form_chart = '/tmp/formative_chart.png'
+            save_formative_years_chart(df, birth_year, _form_chart)
+            st.image(_form_chart, use_container_width=True)
 
-    # Dimensionen
+    # Dimensionen mit je eigenem Chart
     st.divider()
     st.subheader('🧠 Persönlichkeitsprofil')
     dim_order = ['bewertungsstil', 'meinungsstaerke', 'geschmacksbreite', 'epoche']
@@ -249,11 +262,9 @@ with col_left:
             d = dims[key]
             st.markdown(f'**{d["emoji"]} {dim_labels[key]}** — {d["pole"]}')
             st.caption(d['desc'])
-
-    # Detail-Charts für alle 4 Dimensionen
-    bars_path = '/tmp/dim_detail_tmp.png'
-    save_dimension_detail_charts(display_name, df, dims, bars_path)
-    st.image(bars_path, use_container_width=True)
+            _dim_path = f'/tmp/dim_{key}.png'
+            save_single_dimension_chart(key, df, dims, _dim_path)
+            st.image(_dim_path, use_container_width=True)
 
 with col_right:
     # Radar Chart
