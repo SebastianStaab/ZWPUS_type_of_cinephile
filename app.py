@@ -10,6 +10,7 @@ Deploy auf Streamlit Community Cloud:
 
 import os
 import io
+import threading as _threading
 import streamlit as st
 import pandas as pd
 import matplotlib
@@ -24,8 +25,54 @@ from film_personality import (
     compute_dimensions, compute_bonus_achievements,
     compute_genre_achievements, compute_insider_achievements,
     compute_progressive_achievements, compute_top_flop,
-    save_radar_chart, save_dimension_bars_chart,
+    save_radar_chart, save_dimension_detail_charts, compute_formative_years_stats,
 )
+
+# ── Cache-Warming (Background) ───────────────────────────────────
+_cache_warmed   = False
+_cache_warm_lock = _threading.Lock()
+
+def _start_cache_warming(api_key, script_dir, cache_path):
+    """
+    Startet einmalig einen Background-Thread, der den TMDB-Cache
+    mit David- und Robert-Ratings vorwärmt. Non-blocking für den User.
+    """
+    global _cache_warmed
+    with _cache_warm_lock:
+        if _cache_warmed or not api_key:
+            return
+        _cache_warmed = True
+
+    def _warm():
+        try:
+            import json
+            # Schon warm genug?
+            try:
+                with open(cache_path) as _f:
+                    _data = json.load(_f)
+                if len(_data) > 1000:
+                    return
+            except Exception:
+                pass
+
+            from tmdb_enrich import enrich_letterboxd
+
+            for fname in ['david_ratings.csv', 'robert_ratings.csv']:
+                fpath = os.path.join(script_dir, fname)
+                if not os.path.exists(fpath):
+                    continue
+                df_w = pd.read_csv(fpath)
+                if 'rating' in df_w.columns:
+                    df_w['user_rating'] = df_w['rating'] * 2
+                if 'title' not in df_w.columns and len(df_w.columns) > 1:
+                    df_w = df_w.rename(columns={df_w.columns[1]: 'title'})
+                enrich_letterboxd(df_w, api_key, cache_path=cache_path,
+                                  progress_cb=None)
+        except Exception:
+            pass   # Warming-Fehler sind nicht kritisch
+
+    _threading.Thread(target=_warm, daemon=True).start()
+
 
 # ── Seitenkonfiguration ───────────────────────────────────────────
 st.set_page_config(
@@ -71,6 +118,16 @@ with st.sidebar:
         '**IMDB-Export** wird ebenfalls unterstützt.'
     )
 
+    # Cache-Status
+    _cpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmdb_cache.json')
+    try:
+        import json as _json
+        _n = len(_json.load(open(_cpath)))
+        st.caption(f'📦 TMDB-Cache: {_n} Filme gecacht')
+    except Exception:
+        if _cache_warmed:
+            st.caption('⏳ Cache wird vorbereitet...')
+
 # ── Hauptbereich ──────────────────────────────────────────────────
 st.title('🎬 Zwei wie Pech & Schwafel')
 st.subheader('Dein Film-Persönlichkeitstest')
@@ -96,17 +153,30 @@ if not uploaded:
 api_key    = st.session_state.get('tmdb_key', '')
 cache_path = os.path.join(os.path.dirname(__file__), 'tmdb_cache.json')
 
+# Datei in temporären Pfad schreiben
+tmp_path = '/tmp/ratings_upload.csv'
+with open(tmp_path, 'wb') as f:
+    f.write(uploaded.read())
+
+# Progressbar für TMDB-Anreicherung
+_prog_bar  = st.empty()
+_prog_text = st.empty()
+
+def _tmdb_progress(done, total):
+    pct = done / total if total else 0
+    _prog_bar.progress(pct)
+    _prog_text.caption(f'🎬 TMDB-Anreicherung: {done}/{total} Filme geladen…')
+    if done == total:
+        _prog_bar.empty()
+        _prog_text.empty()
+
 with st.spinner('Lade Ratings...'):
     try:
-        # Datei in temporären Pfad schreiben
-        tmp_path = '/tmp/ratings_upload.csv'
-        with open(tmp_path, 'wb') as f:
-            f.write(uploaded.read())
-
         df, df_raw = detect_and_load(
             tmp_path,
             api_key=api_key if api_key else None,
             cache_path=cache_path,
+            progress_cb=_tmdb_progress,
         )
     except Exception as e:
         st.error(f'Fehler beim Laden: {e}')
@@ -114,6 +184,9 @@ with st.spinner('Lade Ratings...'):
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 david_df, robert_df = load_david_robert(script_dir)
+
+# Cache mit David/Robert-Filmen vorwärmen (einmalig im Hintergrund)
+_start_cache_warming(api_key, script_dir, cache_path)
 
 # ── Profil berechnen ──────────────────────────────────────────────
 with st.spinner('Berechne Profil...'):
@@ -126,15 +199,8 @@ with st.spinner('Berechne Profil...'):
 
 display_name = name.strip() if name.strip() else 'Anonym'
 
-# Formative-Jahre-Bias berechnen
-formative_bias = None
-formative_n = 0
-if birth_year and 'year' in df.columns:
-    _form = df[df['year'].between(birth_year, birth_year + 19)]
-    _nonform = df[~df['year'].between(birth_year, birth_year + 19)]
-    if len(_form) >= 5 and len(_nonform) >= 5:
-        formative_bias = float(_form['user_rating'].mean() - _nonform['user_rating'].mean())
-        formative_n = len(_form)
+# Formative-Jahre-Bias + Signifikanz
+formative_stats = compute_formative_years_stats(df, birth_year)
 
 # ── Layout ────────────────────────────────────────────────────────
 col_left, col_right = st.columns([1, 1], gap='large')
@@ -150,13 +216,22 @@ with col_left:
         m3.metric('Bias', f'{bias:+.2f}')
 
     # Formative-Jahre-Bias anzeigen
-    if formative_bias is not None:
+    if formative_stats is not None:
+        fs = formative_stats
         st.divider()
-        bias_label = 'Nostalgiker' if formative_bias > 0 else 'Anti-Nostalgiker'
-        st.metric(
-            f'🎞️ Formative Jahrezahl Bias ({birth_year}\u2013{birth_year+19})',
-            f'{formative_bias:+.2f}',
-            help=f'Formativfilm-Ratings vs. Rest. n={formative_n} Filme. Positiv = {bias_label}'
+        bias_label = 'Nostalgiker 💝' if fs['bias'] > 0 else 'Antichrist 😈'
+        sig_text = '(statistisch signifikant ✓)' if fs['significant'] else '(nicht signifikant)'
+        sig_color = '#4caf50' if fs['significant'] else '#888888'
+        st.markdown(f"**🎞️ Prägenden Jahre ({fs['form_start']}–{fs['form_end']})**")
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric('Bias', f"{fs['bias']:+.2f}", help='Formativfilm-Ø minus Rest-Ø. Positiv = Nostalgiker.')
+        mc2.metric('Formative Filme', fs['n_form'])
+        mc3.metric('p-Wert', f"{fs['p_value']:.3f}")
+        st.caption(
+            f"Ø formative Filme: {fs['form_avg']:.2f} | Ø restliche Filme: {fs['nonform_avg']:.2f} | "
+            f"t={fs['t_stat']:.2f} | "
+            f":{'green' if fs['significant'] else 'gray'}[{sig_text}] — "
+            f"{'Der Bias ist statistisch belastbar.' if fs['significant'] else 'Zu wenig Daten oder Effekt zu klein.'}"
         )
 
     # Dimensionen
@@ -175,9 +250,9 @@ with col_left:
             st.markdown(f'**{d["emoji"]} {dim_labels[key]}** — {d["pole"]}')
             st.caption(d['desc'])
 
-    # Dimension Bars Chart
-    bars_path = '/tmp/dim_bars_tmp.png'
-    save_dimension_bars_chart(display_name, dims, bars_path)
+    # Detail-Charts für alle 4 Dimensionen
+    bars_path = '/tmp/dim_detail_tmp.png'
+    save_dimension_detail_charts(display_name, df, dims, bars_path)
     st.image(bars_path, use_container_width=True)
 
 with col_right:

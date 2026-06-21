@@ -204,7 +204,7 @@ def load_imdb_export(path):
     return df_films, raw
 
 
-def load_letterboxd_export(path, api_key=None, cache_path=None):
+def load_letterboxd_export(path, api_key=None, cache_path=None, progress_cb=None):
     """
     Lädt einen Letterboxd-Export (CSV) und reichert ihn optional mit TMDB an.
 
@@ -248,7 +248,7 @@ def load_letterboxd_export(path, api_key=None, cache_path=None):
         try:
             from tmdb_enrich import enrich_letterboxd
             print('  TMDB-Anreicherung läuft...')
-            raw = enrich_letterboxd(raw, api_key, cache_path=cache_path)
+            raw = enrich_letterboxd(raw, api_key, cache_path=cache_path, progress_cb=progress_cb)
             if 'tmdb_rating' in raw.columns:
                 raw['imdb_rating'] = pd.to_numeric(raw['tmdb_rating'], errors='coerce')
         except ImportError:
@@ -271,7 +271,7 @@ def load_letterboxd_export(path, api_key=None, cache_path=None):
     return df_films, raw
 
 
-def detect_and_load(path, api_key=None, cache_path=None):
+def detect_and_load(path, api_key=None, cache_path=None, progress_cb=None):
     """
     Erkennt automatisch ob es ein IMDB- oder Letterboxd-Export ist
     und lädt entsprechend.
@@ -290,7 +290,7 @@ def detect_and_load(path, api_key=None, cache_path=None):
         return load_imdb_export(path)
     elif lb_cols & cols or 'Name' in cols:
         print('  Format erkannt: Letterboxd-Export')
-        return load_letterboxd_export(path, api_key=api_key, cache_path=cache_path)
+        return load_letterboxd_export(path, api_key=api_key, cache_path=cache_path, progress_cb=progress_cb)
     else:
         raise ValueError(
             f'Unbekanntes CSV-Format. Spalten: {list(cols)}\n'
@@ -455,6 +455,11 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
     ach = []
     overall_avg = df['user_rating'].mean()
 
+    # ── hasst Filme mehr als David Hain 😉 ──────────────────────────
+    if overall_avg <= 5.5:
+        ach.append({'emoji': '😬', 'name': 'hasst Filme mehr als David Hain 😉',
+                    'desc': f'Dein Schnitt: {overall_avg:.1f}/10. Du bist strenger als unser strengster Kritiker. Wir machen uns ehrlich gesagt Sorgen.'})
+
     # ── Mainstreamer / Rebell ─────────────────────────────────────
     corr = pearsonr(df['user_rating'].values, df['imdb_rating'].values)
     if not np.isnan(corr):
@@ -504,8 +509,8 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
                 ach.append({'emoji': '💝', 'name': 'Nostalgiker',
                             'desc': f'Filme aus deiner Jugend ({form_start}–{form_end-1}) bewertest du um {diff:.1f} Punkte höher (n={len(form)}).'})
             elif diff < ANTI_NOSTALGIE_DIFF:
-                ach.append({'emoji': '🧊', 'name': 'Anti-Nostalgiker',
-                            'desc': f'Deine Jugendfilme ({form_start}–{form_end-1}) bewertest du um {abs(diff):.1f} Punkte schlechter. Harte Selbstkritik (n={len(form)}).'})
+                ach.append({'emoji': '😈', 'name': 'Antichrist',
+                            'desc': f'Deine Jugendfilme ({form_start}–{form_end-1}) bewertest du um {abs(diff):.1f} Punkte schlechter als den Rest. Du hast deine Kindheit wohl nicht so geliebt. (n={len(form)})'})
 
     # ── Team David / Team Robert ──────────────────────────────────
     corr_d, corr_r = np.nan, np.nan
@@ -738,69 +743,164 @@ def compute_top_flop(df, top_n=3, min_films_genre=5, min_films_dir=3):
 
 
 
-def save_dimension_bars_chart(name, dims, out_path):
+
+def compute_formative_years_stats(df, birth_year):
     """
-    Horizontale Gauge-Balken für die 4 Persönlichkeitsdimensionen.
-    Zeigt für jede Dimension wo der User auf der Skala liegt.
+    Berechnet Formative-Jahre-Bias inkl. Welch-t-Test und p-Wert.
+    Gibt None zurück wenn zu wenig Daten.
+    """
+    if birth_year is None or 'year' not in df.columns:
+        return None
+
+    form_start = birth_year
+    form_end   = birth_year + 20
+    form    = df[df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
+    nonform = df[~df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
+
+    if len(form) < 5 or len(nonform) < 5:
+        return None
+
+    n1, n2 = len(form), len(nonform)
+    m1, m2 = float(form.mean()), float(nonform.mean())
+    v1, v2 = float(form.var(ddof=1)), float(nonform.var(ddof=1))
+    bias   = m1 - m2
+
+    se = np.sqrt(v1 / n1 + v2 / n2)
+    if se == 0:
+        return None
+    t_stat = bias / se
+    # Welch-Satterthwaite degrees of freedom
+    df_w = (v1/n1 + v2/n2)**2 / ((v1/n1)**2/(n1-1) + (v2/n2)**2/(n2-1))
+
+    try:
+        from scipy import stats as _stats
+        p_value = float(2 * _stats.t.sf(abs(t_stat), df=df_w))
+    except ImportError:
+        # Normal-Approximation (gut genug für n > 30)
+        import math
+        p_value = float(2 * (1 - 0.5 * (1 + math.erf(abs(t_stat) / math.sqrt(2)))))
+
+    return {
+        'bias':        bias,
+        'n_form':      n1,
+        'n_nonform':   n2,
+        'form_avg':    m1,
+        'nonform_avg': m2,
+        't_stat':      t_stat,
+        'p_value':     p_value,
+        'significant': p_value < 0.05,
+        'form_start':  form_start,
+        'form_end':    form_end - 1,
+    }
+
+
+
+def save_dimension_detail_charts(name, df, dims, out_path):
+    """
+    2×2 Detail-Charts für jede Persönlichkeitsdimension:
+      - Bewertungsstil:   Histogramm der eigenen Ratings (1–10)
+      - Meinungsstärke:   Histogramm der Differenz (eigene − IMDB)
+      - Geschmacksbreite: Diverging-Balken (Genre-Präferenz vs. Gesamtschnitt)
+      - Lieblingsepoche:  Balken nach Jahrzehnt
     """
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import numpy as np
 
-    def norm_score(key, dims):
-        if key not in dims:
-            return 0.5
-        score = dims[key]['score']
-        if key == 'bewertungsstil':
-            return max(0.0, min(1.0, (score + 3) / 6))   # streng=links, mild=rechts
-        elif key == 'meinungsstaerke':
-            return max(0.0, min(1.0, score / 3))
-        elif key == 'geschmacksbreite':
-            return max(0.0, min(1.0, score))
-        elif key == 'epoche':
-            return max(0.0, min(1.0, (score - 1960) / 65))
-        return 0.5
+    COLOR   = '#e84545'
+    COLOR_P = '#4caf50'
+    COLOR_N = '#f44336'
+    BG      = '#16213e'
+    GRID    = '#2a2a4a'
+    TEXT    = '#eaeaea'
+    SUBTLE  = '#888888'
 
-    dim_config = [
-        ('bewertungsstil',   'Bewertungsstil',   'Streng',     'Mild'),
-        ('meinungsstaerke',  'Meinungsstärke',   'Diplomat',   'Polarisierer'),
-        ('geschmacksbreite', 'Geschmacksbreite', 'Spezialist', 'Omnivore'),
-        ('epoche',           'Lieblingsepoche',  'Klassiker',  'Zeitgeist'),
-    ]
-    available = [(k, l, lo, hi) for k, l, lo, hi in dim_config if k in dims]
-    n = len(available)
-    if n == 0:
-        return
-
-    fig, axes = plt.subplots(n, 1, figsize=(6, n * 1.0 + 0.4))
-    if n == 1:
-        axes = [axes]
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7))
     fig.patch.set_facecolor('#1a1a2e')
 
-    for ax, (key, label, lo_label, hi_label) in zip(axes, available):
-        sc = norm_score(key, dims)
-        pole = dims[key]['pole']
-        ax.set_facecolor('#1a1a2e')
-        # Track
-        ax.barh(0, 1.0, height=0.35, color='#2a2a4a', left=0, zorder=1)
-        # Fill
-        ax.barh(0, sc, height=0.35, color='#e84545', left=0, alpha=0.85, zorder=2)
-        # Dot
-        ax.scatter([sc], [0], color='white', s=80, zorder=5)
-        # Pole labels
-        ax.text(-0.03, 0, lo_label, ha='right', va='center', fontsize=8.5, color='#888888')
-        ax.text(1.03, 0, hi_label, ha='left', va='center', fontsize=8.5, color='#888888')
-        # Dimension label + current pole
-        ax.text(0.5, 0.32, f'{label}: {pole}', ha='center', va='bottom',
-                fontsize=9, color='#eaeaea', fontweight='bold')
-        ax.set_xlim(-0.22, 1.22)
-        ax.set_ylim(-0.3, 0.6)
-        ax.axis('off')
+    def style_ax(ax, title, xlabel='', ylabel=''):
+        ax.set_facecolor(BG)
+        ax.set_title(title, color=TEXT, fontsize=9.5, fontweight='bold', pad=7)
+        ax.tick_params(colors=SUBTLE, labelsize=8, length=0)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(GRID)
+        if xlabel:
+            ax.set_xlabel(xlabel, color=SUBTLE, fontsize=8)
+        if ylabel:
+            ax.set_ylabel(ylabel, color=SUBTLE, fontsize=8)
 
-    plt.tight_layout(h_pad=0.3)
+    # ── 1. Bewertungsstil: Rating-Histogramm ─────────────────────
+    ax = axes[0, 0]
+    pole = dims.get('bewertungsstil', {}).get('pole', '')
+    counts = [(df['user_rating'] == i).sum() for i in range(1, 11)]
+    ax.bar(range(1, 11), counts, color=COLOR, alpha=0.85, width=0.72, zorder=3)
+    ax.yaxis.grid(True, color=GRID, linewidth=0.5, alpha=0.6, zorder=0)
+    mean_r = df['user_rating'].mean()
+    ax.axvline(mean_r, color='white', lw=1.5, ls='--', alpha=0.85, zorder=5)
+    ymax = max(counts) if counts else 1
+    ax.text(mean_r + 0.15, ymax * 0.92, f'Ø {mean_r:.1f}', color='white', fontsize=8)
+    ax.set_xticks(range(1, 11))
+    style_ax(ax, f'Bewertungsstil  [{pole}]', 'Rating (1–10)', 'Filme')
+
+    # ── 2. Meinungsstärke: Diff-Histogramm (eigene − IMDB) ───────
+    ax = axes[0, 1]
+    pole = dims.get('meinungsstaerke', {}).get('pole', '')
+    diff = (df['user_rating'] - df['imdb_rating']).dropna()
+    if len(diff) > 0:
+        bins = [x - 0.5 for x in range(-9, 11)]
+        ax.hist(diff, bins=bins, color=COLOR, alpha=0.85, edgecolor=BG, zorder=3)
+        ax.yaxis.grid(True, color=GRID, linewidth=0.5, alpha=0.6, zorder=0)
+        ax.axvline(0, color='white', lw=1.2, ls='--', alpha=0.55, zorder=4)
+        ax.axvline(diff.mean(), color='#ffd700', lw=1.8, alpha=0.9, zorder=5)
+        ymax2 = ax.get_ylim()[1]
+        ax.text(diff.mean() + 0.2, ymax2 * 0.86, f'Ø {diff.mean():+.2f}', color='#ffd700', fontsize=8)
+        std_val = diff.std()
+        ax.text(0.97, 0.93, f'σ={std_val:.2f}', transform=ax.transAxes,
+                color='#aaaaaa', fontsize=7.5, ha='right', va='top')
+    style_ax(ax, f'Meinungsstärke  [{pole}]', 'Eigene − IMDB', 'Filme')
+
+    # ── 3. Geschmacksbreite: Genre-Präferenz (Diverging) ─────────
+    ax = axes[1, 0]
+    pole = dims.get('geschmacksbreite', {}).get('pole', '')
+    gdf  = explode_genres(df)
+    if not gdf.empty:
+        overall_avg = df['user_rating'].mean()
+        genre_stats = gdf.groupby('genre').agg(n=('user_rating','count'), avg=('user_rating','mean'))
+        genre_stats = genre_stats[genre_stats['n'] >= 5].copy()
+        genre_stats['diff'] = genre_stats['avg'] - overall_avg
+        genre_stats = genre_stats.sort_values('diff').tail(12)  # top 12 by diff
+        colors = [COLOR_P if v >= 0 else COLOR_N for v in genre_stats['diff']]
+        ax.barh(range(len(genre_stats)), genre_stats['diff'].values, color=colors, alpha=0.85, zorder=3)
+        ax.xaxis.grid(True, color=GRID, linewidth=0.5, alpha=0.6, zorder=0)
+        ax.set_yticks(range(len(genre_stats)))
+        ax.set_yticklabels(genre_stats.index, fontsize=7.5, color=TEXT)
+        ax.axvline(0, color='white', lw=1, alpha=0.5, zorder=4)
+    style_ax(ax, f'Geschmacksbreite  [{pole}]', 'Diff. zu eigenem Ø', '')
+
+    # ── 4. Epoche: Filme nach Jahrzehnt ──────────────────────────
+    ax = axes[1, 1]
+    pole = dims.get('epoche', {}).get('pole', '')
+    if 'year' in df.columns:
+        years = df['year'].dropna()
+        decades = (years // 10 * 10).astype(int)
+        dc = decades.value_counts().sort_index()
+        ax.bar(dc.index, dc.values, width=8.5, color=COLOR, alpha=0.85, zorder=3)
+        ax.yaxis.grid(True, color=GRID, linewidth=0.5, alpha=0.6, zorder=0)
+        median_y = int(years.median())
+        ax.axvline(median_y, color='white', lw=1.5, ls='--', alpha=0.85, zorder=5)
+        ax.text(median_y + 2, dc.values.max() * 0.9, 'Median\n' + str(median_y),
+                color='white', fontsize=7.5)
+        ax.set_xticks(dc.index)
+        ax.set_xticklabels([f"{d}s" for d in dc.index], rotation=40, ha='right', fontsize=7)
+    style_ax(ax, f'Lieblingsepoche  [{pole}]', '', 'Filme')
+
+    plt.suptitle(f'Profil: {name}', color=TEXT, fontsize=12, fontweight='bold', y=1.01)
+    plt.tight_layout(h_pad=2.5, w_pad=2.5)
     fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
     plt.close(fig)
+    print(f'  Detail-Charts gespeichert: {out_path}')
+
 
 def save_radar_chart(name, dims, out_path):
     """
