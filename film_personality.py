@@ -41,7 +41,7 @@ DIM_ZEITGEIST_YEAR     = 2010   # Median-Jahr > X → Zeitgeist
 # Genre-Achievements
 # Trigger: user_avg_genre - user_gesamt_avg > X  (relativ zum eigenen Schnitt,
 # d.h. strenge Bewerter werden nicht benachteiligt — nur relativ bessere Genres zählen)
-GENRE_DIFF_THRESHOLD = 0.5   # Differenz auf 1-10 Skala
+GENRE_DIFF_THRESHOLD = 0.2   # Differenz auf 1-10 Skala
 GENRE_MIN_FILMS      = 5     # Mind. X Filme im Genre
 
 # Bonus-Achievements
@@ -549,14 +549,17 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
 
 def compute_genre_achievements(df):
     """
-    Prüft für jedes Genre: bewertet der User Filme dieses Genres
-    überdurchschnittlich (relativ zu seinem eigenen Gesamtschnitt)?
-    Threshold: user_avg_genre - user_gesamt_avg > GENRE_DIFF_THRESHOLD
+    Prüft für jedes Genre positive und negative Achievements.
+    Positiv: user_avg_genre - user_gesamt_avg >= GENRE_DIFF_THRESHOLD
+    Negativ (hasst): adj = (user_avg - imdb_avg) - overall_bias <= -0.5
     """
     if 'genres' not in df.columns or df['genres'].notna().sum() < 10:
         return []
 
     overall_avg = df['user_rating'].mean()
+    has_imdb = df['imdb_rating'].notna().sum() > 0
+    overall_bias = float((df['user_rating'] - df['imdb_rating']).mean()) if has_imdb else 0.0
+
     gdf = explode_genres(df)
     if gdf.empty:
         return []
@@ -572,6 +575,16 @@ def compute_genre_achievements(df):
                 'emoji': emoji, 'name': name,
                 'desc': f'{desc}  [{genre}: Ø{sub["user_rating"].mean():.1f}, +{diff:.1f} über deinem Schnitt, n={len(sub)}]'
             })
+        # Hate achievement: adj <= -0.5 (nur wenn IMDB-Daten vorhanden)
+        if has_imdb:
+            sub_rated = sub[sub['imdb_rating'].notna()]
+            if len(sub_rated) >= GENRE_MIN_FILMS:
+                adj = (sub_rated['user_rating'].mean() - sub_rated['imdb_rating'].mean()) - overall_bias
+                if adj <= -0.5:
+                    ach.append({
+                        'emoji': '🚫', 'name': f'hasst {genre}',
+                        'desc': f'{genre}: adj={adj:+.2f} — du magst dieses Genre deutlich weniger als dein Gesamtprofil erwarten lässt. (n={len(sub_rated)})'
+                    })
     return ach
 
 
@@ -659,7 +672,7 @@ def compute_progressive_achievements(df_raw):
 # 5. TOP / FLOP ANALYSE
 # ─────────────────────────────────────────────────────────────────
 
-def compute_top_flop(df, top_n=3, min_films_genre=5, min_films_dir=5):
+def compute_top_flop(df, top_n=3, min_films_genre=5, min_films_dir=3):
     """
     Genre- und Regisseur-Statistiken.
     adj = (user_avg - imdb_avg) - overall_user_bias
@@ -723,6 +736,72 @@ def compute_top_flop(df, top_n=3, min_films_genre=5, min_films_dir=5):
 # 6. RADAR CHART
 # ─────────────────────────────────────────────────────────────────
 
+
+
+def save_dimension_bars_chart(name, dims, out_path):
+    """
+    Horizontale Gauge-Balken für die 4 Persönlichkeitsdimensionen.
+    Zeigt für jede Dimension wo der User auf der Skala liegt.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    def norm_score(key, dims):
+        if key not in dims:
+            return 0.5
+        score = dims[key]['score']
+        if key == 'bewertungsstil':
+            return max(0.0, min(1.0, (score + 3) / 6))   # streng=links, mild=rechts
+        elif key == 'meinungsstaerke':
+            return max(0.0, min(1.0, score / 3))
+        elif key == 'geschmacksbreite':
+            return max(0.0, min(1.0, score))
+        elif key == 'epoche':
+            return max(0.0, min(1.0, (score - 1960) / 65))
+        return 0.5
+
+    dim_config = [
+        ('bewertungsstil',   'Bewertungsstil',   'Streng',     'Mild'),
+        ('meinungsstaerke',  'Meinungsstärke',   'Diplomat',   'Polarisierer'),
+        ('geschmacksbreite', 'Geschmacksbreite', 'Spezialist', 'Omnivore'),
+        ('epoche',           'Lieblingsepoche',  'Klassiker',  'Zeitgeist'),
+    ]
+    available = [(k, l, lo, hi) for k, l, lo, hi in dim_config if k in dims]
+    n = len(available)
+    if n == 0:
+        return
+
+    fig, axes = plt.subplots(n, 1, figsize=(6, n * 1.0 + 0.4))
+    if n == 1:
+        axes = [axes]
+    fig.patch.set_facecolor('#1a1a2e')
+
+    for ax, (key, label, lo_label, hi_label) in zip(axes, available):
+        sc = norm_score(key, dims)
+        pole = dims[key]['pole']
+        ax.set_facecolor('#1a1a2e')
+        # Track
+        ax.barh(0, 1.0, height=0.35, color='#2a2a4a', left=0, zorder=1)
+        # Fill
+        ax.barh(0, sc, height=0.35, color='#e84545', left=0, alpha=0.85, zorder=2)
+        # Dot
+        ax.scatter([sc], [0], color='white', s=80, zorder=5)
+        # Pole labels
+        ax.text(-0.03, 0, lo_label, ha='right', va='center', fontsize=8.5, color='#888888')
+        ax.text(1.03, 0, hi_label, ha='left', va='center', fontsize=8.5, color='#888888')
+        # Dimension label + current pole
+        ax.text(0.5, 0.32, f'{label}: {pole}', ha='center', va='bottom',
+                fontsize=9, color='#eaeaea', fontweight='bold')
+        ax.set_xlim(-0.22, 1.22)
+        ax.set_ylim(-0.3, 0.6)
+        ax.axis('off')
+
+    plt.tight_layout(h_pad=0.3)
+    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+    plt.close(fig)
+
 def save_radar_chart(name, dims, out_path):
     """
     Radar-Chart der 4 Persönlichkeitsdimensionen.
@@ -744,7 +823,8 @@ def save_radar_chart(name, dims, out_path):
         score = dims[key]['score']
         if key == 'bewertungsstil':
             # score ist Δ(user - imdb), Bereich ca. -3 bis +3
-            return max(0.0, min(1.0, (score + 3) / 6))
+            # streng (negativ) = außen (1), mild (positiv) = innen (0)
+            return max(0.0, min(1.0, (-score + 3) / 6))
         elif key == 'meinungsstaerke':
             # score ist std, Bereich ca. 0 bis 3
             return max(0.0, min(1.0, score / 3))
@@ -756,7 +836,7 @@ def save_radar_chart(name, dims, out_path):
             return max(0.0, min(1.0, (score - 1960) / 65))
         return 0.5
 
-    labels = ['Mild\n(Bewertungsstil)', 'Polarisierer\n(Meinungsstaerke)',
+    labels = ['Streng\n(Bewertungsstil)', 'Polarisierer\n(Meinungsstaerke)',
               'Omnivore\n(Geschmack)', 'Zeitgeist\n(Epoche)']
     scores = [
         norm_score('bewertungsstil',   dims),
@@ -779,7 +859,7 @@ def save_radar_chart(name, dims, out_path):
     ax.set_yticklabels([])
     ax.set_ylim(0, 1)
 
-    counter_labels = ['Streng', 'Diplomat', 'Spezialist', 'Klassiker']
+    counter_labels = ['Mild', 'Diplomat', 'Spezialist', 'Klassiker']
     for angle, clabel in zip(angles[:-1], counter_labels):
         ax.text(angle, 0.08, clabel, ha='center', va='center',
                 fontsize=7, color='grey', style='italic')

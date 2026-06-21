@@ -24,7 +24,7 @@ from film_personality import (
     compute_dimensions, compute_bonus_achievements,
     compute_genre_achievements, compute_insider_achievements,
     compute_progressive_achievements, compute_top_flop,
-    save_radar_chart,
+    save_radar_chart, save_dimension_bars_chart,
 )
 
 # ── Seitenkonfiguration ───────────────────────────────────────────
@@ -54,11 +54,15 @@ with st.sidebar:
                                  max_value=2010, value=1995, step=1)
     birth_year = int(birth_year) if birth_year else None
 
-    api_key_input = st.text_input('TMDB API-Key', value=get_api_key(),
-                                   type='password',
-                                   help='Kostenlos auf themoviedb.org registrieren')
-    if api_key_input:
-        st.session_state['tmdb_key'] = api_key_input
+    try:
+        _key_from_secrets = st.secrets['TMDB_API_KEY']
+        st.session_state['tmdb_key'] = _key_from_secrets
+        st.caption('✅ TMDB API-Key konfiguriert')
+    except Exception:
+        api_key_input = st.text_input('TMDB API-Key', type='password',
+                                       help='Kostenlos auf themoviedb.org registrieren')
+        if api_key_input:
+            st.session_state['tmdb_key'] = api_key_input
 
     st.divider()
     st.markdown(
@@ -122,6 +126,16 @@ with st.spinner('Berechne Profil...'):
 
 display_name = name.strip() if name.strip() else 'Anonym'
 
+# Formative-Jahre-Bias berechnen
+formative_bias = None
+formative_n = 0
+if birth_year and 'year' in df.columns:
+    _form = df[df['year'].between(birth_year, birth_year + 19)]
+    _nonform = df[~df['year'].between(birth_year, birth_year + 19)]
+    if len(_form) >= 5 and len(_nonform) >= 5:
+        formative_bias = float(_form['user_rating'].mean() - _nonform['user_rating'].mean())
+        formative_n = len(_form)
+
 # ── Layout ────────────────────────────────────────────────────────
 col_left, col_right = st.columns([1, 1], gap='large')
 
@@ -134,6 +148,16 @@ with col_left:
         bias = (df['user_rating'] - df['imdb_rating']).mean()
         m2.metric('IMDB Ø', f'{df["imdb_rating"].mean():.2f}')
         m3.metric('Bias', f'{bias:+.2f}')
+
+    # Formative-Jahre-Bias anzeigen
+    if formative_bias is not None:
+        st.divider()
+        bias_label = 'Nostalgiker' if formative_bias > 0 else 'Anti-Nostalgiker'
+        st.metric(
+            f'🎞️ Formative Jahrezahl Bias ({birth_year}\u2013{birth_year+19})',
+            f'{formative_bias:+.2f}',
+            help=f'Formativfilm-Ratings vs. Rest. n={formative_n} Filme. Positiv = {bias_label}'
+        )
 
     # Dimensionen
     st.divider()
@@ -150,6 +174,11 @@ with col_left:
             d = dims[key]
             st.markdown(f'**{d["emoji"]} {dim_labels[key]}** — {d["pole"]}')
             st.caption(d['desc'])
+
+    # Dimension Bars Chart
+    bars_path = '/tmp/dim_bars_tmp.png'
+    save_dimension_bars_chart(display_name, dims, bars_path)
+    st.image(bars_path, use_container_width=True)
 
 with col_right:
     # Radar Chart
@@ -193,8 +222,8 @@ if 'genre_all' in topflop and not topflop['genre_all'].empty:
 
     def color_adj(val):
         if isinstance(val, float):
-            if val >= 0.5:  return 'color: #4caf50; font-weight: bold'
-            if val <= -0.5: return 'color: #f44336; font-weight: bold'
+            if val >= 0.2:  return 'color: #4caf50; font-weight: bold'
+            if val <= -0.2: return 'color: #f44336; font-weight: bold'
         return ''
 
     st.dataframe(
@@ -208,12 +237,12 @@ if 'dir_all' in topflop and not topflop['dir_all'].empty:
     st.subheader('🎥 Regisseure')
     dcol1, dcol2 = st.columns(2)
     with dcol1:
-        st.markdown('**Top 5**')
-        for d, row in topflop['dir_top'].head(5).iterrows():
+        st.markdown('**Top 3**')
+        for d, row in topflop['dir_top'].head(3).iterrows():
             st.markdown(f'`{d}` — Ø {row["user_avg"]:.1f} (n={int(row["n"])})')
     with dcol2:
-        st.markdown('**Schlechtester Schnitt**')
-        for d, row in topflop['dir_flop'].head(5).iterrows():
+        st.markdown('**Flop 3**')
+        for d, row in topflop['dir_flop'].head(3).iterrows():
             st.markdown(f'`{d}` — Ø {row["user_avg"]:.1f} (n={int(row["n"])})')
 
 # ── Footer ────────────────────────────────────────────────────────
