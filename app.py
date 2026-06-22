@@ -207,15 +207,13 @@ try:
 except Exception:
     pass
 
+_debug_api_lines = []
 if _is_lb_quick and api_key:
     try:
         import requests as _req
-        # Test 1: Pulp Fiction (Referenzfilm)
         _tr = _req.get('https://api.themoviedb.org/3/search/movie',
-                       params={'api_key': api_key.strip(), 'query': 'Pulp Fiction'},
-                       timeout=8)
-        st.caption(f'🔍 TMDB API-Test: HTTP {_tr.status_code} — {len(_tr.json().get("results", []))} Treffer für "Pulp Fiction"')
-        # Test 2: Erster Film aus dem LB-Export (echter Test)
+                       params={'api_key': api_key.strip(), 'query': 'Pulp Fiction'}, timeout=8)
+        _debug_api_lines.append(f'API-Test "Pulp Fiction": HTTP {_tr.status_code} — {len(_tr.json().get("results", []))} Treffer')
         try:
             _lbdf_test = pd.read_csv(tmp_path, nrows=2)
             _t1 = str(_lbdf_test['Name'].iloc[0]) if 'Name' in _lbdf_test.columns else '?'
@@ -224,14 +222,11 @@ if _is_lb_quick and api_key:
             if _y1 and str(_y1) not in ('nan', '0'):
                 _params1['year'] = int(_y1)
             _tr2 = _req.get('https://api.themoviedb.org/3/search/movie', params=_params1, timeout=8)
-            _r2  = _tr2.json()
-            st.caption(f'🔍 Test erster LB-Film "{_t1}" ({_y1}): HTTP {_tr2.status_code} — {len(_r2.get("results", []))} Treffer | api_key[:4]={api_key[:4]}')
+            _debug_api_lines.append(f'API-Test "{_t1}" ({_y1}): HTTP {_tr2.status_code} — {len(_tr2.json().get("results", []))} Treffer')
         except Exception as _te2:
-            st.caption(f'🔍 LB-Film-Test FEHLER: {_te2}')
+            _debug_api_lines.append(f'LB-Film-Test FEHLER: {_te2}')
     except Exception as _te:
-        st.warning(f'🔍 TMDB API-Test FEHLER: {_te}')
-elif _is_lb_quick and not api_key:
-    st.caption('🔍 TMDB API-Test: kein api_key')
+        _debug_api_lines.append(f'API-Test FEHLER: {_te}')
 
 with st.spinner('Lade Ratings...'):
     try:
@@ -603,6 +598,8 @@ else:
 # ── Debug (versteckt, nur bei Bedarf aufklappen) ─────────────────
 if _is_lb and api_key:
     with st.expander('🔧 Debug', expanded=False):
+        for _line in _debug_api_lines:
+            st.caption(_line)
         if '_enrich_error' in df_raw.columns:
             st.error(f'Enrichment-Fehler: {df_raw["_enrich_error"].iloc[0]}')
         _dcols = [c for c in ['title', 'year', 'tmdb_rating', 'genres', 'directors'] if c in df_raw.columns]
