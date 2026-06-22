@@ -172,7 +172,7 @@ if not uploaded:
 # ── Daten laden ───────────────────────────────────────────────────
 # Secrets haben Priorität — Session-State nur als Fallback für manuelle Eingabe
 try:
-    api_key = st.secrets['TMDB_API_KEY'] or ''
+    api_key = (st.secrets['TMDB_API_KEY'] or '').strip()
 except Exception:
     api_key = st.session_state.get('tmdb_key', '')
 # Cache-Pfad: App-Verzeichnis wenn schreibbar (lokal), sonst /tmp (Streamlit Cloud)
