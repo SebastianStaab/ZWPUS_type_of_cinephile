@@ -113,8 +113,14 @@ def _cache_key(title, year):
 
 def load_cache(path=CACHE_FILE):
     if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            if not content:
+                return {}
+            return json.loads(content)
+        except Exception:
+            return {}
     return {}
 
 

@@ -267,7 +267,9 @@ def load_letterboxd_export(path, api_key=None, cache_path=None, progress_cb=None
         except ImportError:
             print('  Warnung: tmdb_enrich.py nicht gefunden — keine Genres/Regisseure')
         except Exception as _enrich_err:
-            print(f'  FEHLER bei TMDB-Anreicherung: {_enrich_err}')
+            import traceback as _tb
+            raw['_enrich_error'] = f'{type(_enrich_err).__name__}: {_enrich_err}'[:200]
+            print(f'  FEHLER bei TMDB-Anreicherung: {_enrich_err}\n{_tb.format_exc()[-400:]}')
             # Fallback: leere Spalten damit der Rest der App funktioniert
             if 'imdb_rating' not in raw.columns:
                 raw['imdb_rating'] = float('nan')
@@ -1232,18 +1234,20 @@ def save_radar_chart(name, dims, out_path):
             return max(0.0, min(1.0, score))
         elif key == 'epoche':
             # score ist Medianjahr, Bereich 1960–2025
-            return max(0.0, min(1.0, (score - 1960) / 65))
+            # umgekehrt: außen = Klassiker (altes Kino), innen = Zeitgeist
+            return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
         elif key == 'publikum':
             # score: Blockbuster-adj − Arthouse-adj, Bereich ca. -2 bis +2
-            return max(0.0, min(1.0, (score + 2) / 4))
+            # umgekehrt: außen = Arthouse, innen = Blockbuster
+            return max(0.0, min(1.0, 1.0 - (score + 2) / 4))
         return 0.5
 
     _dim_cfg = [
         ('bewertungsstil',   'Streng\n(Bewertungsstil)',   'Mild'),
         ('meinungsstaerke',  'Polarisierer\n(Meinung)',      'Diplomat'),
         ('geschmacksbreite', 'Omnivore\n(Geschmack)',       'Spezialist'),
-        ('epoche',           'Zeitgeist\n(Epoche)',          'Klassiker'),
-        ('publikum',         'Blockbuster\n(Publikum)',      'Arthouse'),
+        ('epoche',           'Klassiker\n(Epoche)',           'Zeitgeist'),
+        ('publikum',         'Arthouse\n(Publikum)',         'Blockbuster'),
     ]
     _dim_cfg = [(k, lo, hi) for k, lo, hi in _dim_cfg if k in dims]
     labels        = [lo for _, lo, _ in _dim_cfg]

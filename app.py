@@ -157,11 +157,10 @@ if not uploaded:
         st.markdown(
             '### Letterboxd-Export\n'
             '1. letterboxd.com → Profil → **Einstellungen** → **Daten** → "Export Your Data"\n'
-            '2. ZIP öffnen → `ratings.csv` hochladen\n'
-            '3. Für volle Analyse (Genres, Regisseure, IMDB-Vergleich): TMDB-API-Key in der Sidebar eintragen (kostenlos auf themoviedb.org)\n\n'
+            '2. ZIP öffnen → `ratings.csv` hochladen\n\n'
             '### IMDB-Export\n'
             '1. imdb.com → Profil-Icon → **Your ratings** → `...` → **Export**\n'
-            '2. CSV direkt hochladen — kein API-Key nötig, Genres und Regisseure sind bereits enthalten\n'
+            '2. CSV direkt hochladen — Genres und Regisseure sind bereits enthalten\n'
         )
     st.stop()
 
@@ -176,10 +175,14 @@ _app_dir   = os.path.dirname(os.path.abspath(__file__))
 _cache_app = os.path.join(_app_dir, 'tmdb_cache.json')
 _cache_tmp = '/tmp/tmdb_cache.json'
 try:
-    open(_cache_app, 'a').close()
+    # Echter Write-Test: nicht nur open('a') (öffnet auch read-only Dateien)
+    import tempfile as _tf
+    _tf_fd, _tf_path = _tf.mkstemp(dir=_app_dir)
+    os.close(_tf_fd)
+    os.unlink(_tf_path)
     cache_path = _cache_app
 except Exception:
-    cache_path = _cache_tmp  # Streamlit Cloud: App-Dir ist read-only
+    cache_path = _cache_tmp  # Streamlit Cloud: App-Dir ist read-only → /tmp nutzen
 # Cache-Warming deaktiviert: auf Streamlit Cloud persisitiert /tmp nicht,
 # und der Warming-Thread konkurriert mit User-Enrichment um TMDB Rate-Limit.
 
@@ -259,6 +262,8 @@ _no_imdb = 'imdb_rating' not in df.columns or df['imdb_rating'].isna().all()
 if _is_lb and api_key:
     _dcols = [c for c in ['title', 'year', 'tmdb_rating', 'genres', 'directors'] if c in df_raw.columns]
     with st.expander(f'🔧 Debug: Enrichment-Ergebnis (erste 5 Filme)', expanded=_no_imdb):
+        if '_enrich_error' in df_raw.columns:
+            st.error(f'Enrichment-Fehler: {df_raw["_enrich_error"].iloc[0]}')
         st.dataframe(df_raw[_dcols].head(), use_container_width=True)
         st.caption(f'tmdb_rating nicht-null: {df_raw["tmdb_rating"].notna().sum() if "tmdb_rating" in df_raw.columns else "Spalte fehlt"} / {len(df_raw)}')
         st.caption(f'cache_path: {cache_path}')
@@ -614,6 +619,6 @@ else:
 st.divider()
 st.caption(
     '🎙️ [Zwei wie Pech & Schwafel](https://www.imdb.com/title/tt...) • '
-    'Daten: Letterboxd + TMDB • '
+    'Daten: Letterboxd + IMDB + TMDB • '
     'Ratings werden nicht gespeichert.'
 )
