@@ -253,8 +253,19 @@ def load_letterboxd_export(path, api_key=None, cache_path=None, progress_cb=None
                 raw['imdb_rating'] = pd.to_numeric(raw['tmdb_rating'], errors='coerce')
             if 'vote_count' in raw.columns:
                 raw['num_votes'] = pd.to_numeric(raw['vote_count'], errors='coerce')
+            n_enriched = raw['imdb_rating'].notna().sum() if 'imdb_rating' in raw.columns else 0
+            print(f'  TMDB: {n_enriched}/{len(raw)} Filme mit Rating angereichert')
         except ImportError:
             print('  Warnung: tmdb_enrich.py nicht gefunden — keine Genres/Regisseure')
+        except Exception as _enrich_err:
+            print(f'  FEHLER bei TMDB-Anreicherung: {_enrich_err}')
+            # Fallback: leere Spalten damit der Rest der App funktioniert
+            if 'imdb_rating' not in raw.columns:
+                raw['imdb_rating'] = float('nan')
+            if 'genres' not in raw.columns:
+                raw['genres'] = float('nan')
+            if 'directors' not in raw.columns:
+                raw['directors'] = float('nan')
     else:
         raw['imdb_rating'] = float('nan')
         raw['genres']      = float('nan')

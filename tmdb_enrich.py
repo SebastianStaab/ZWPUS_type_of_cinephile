@@ -80,8 +80,11 @@ def load_cache(path=CACHE_FILE):
 
 
 def save_cache(cache, path=CACHE_FILE):
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2)
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass  # Read-only filesystem (z.B. Streamlit Cloud) — kein Cache-Schreiben, aber Daten im RAM
 
 
 # ── TMDB API ──────────────────────────────────────────────────────
@@ -200,8 +203,8 @@ def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None):
             progress_cb(i + 1, total)
 
     if new_entries > 0:
-        save_cache(cache, cache_path)
-        print(f'  TMDB: {new_entries} neue Einträge gecacht (gesamt: {len(cache)})')
+        save_cache(cache, cache_path)  # silent on error
+        print(f'  TMDB: {new_entries} neue Einträge verarbeitet (gesamt im RAM: {len(cache)})')
 
     # Merge cache into df
     def get_field(row, field):

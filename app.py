@@ -160,7 +160,15 @@ try:
     api_key = st.secrets['TMDB_API_KEY'] or ''
 except Exception:
     api_key = st.session_state.get('tmdb_key', '')
-cache_path = os.path.join(os.path.dirname(__file__), 'tmdb_cache.json')
+# Cache-Pfad: App-Verzeichnis wenn schreibbar (lokal), sonst /tmp (Streamlit Cloud)
+_app_dir   = os.path.dirname(os.path.abspath(__file__))
+_cache_app = os.path.join(_app_dir, 'tmdb_cache.json')
+_cache_tmp = '/tmp/tmdb_cache.json'
+try:
+    open(_cache_app, 'a').close()
+    cache_path = _cache_app
+except Exception:
+    cache_path = _cache_tmp  # Streamlit Cloud: App-Dir ist read-only
 _script_dir_early = os.path.dirname(os.path.abspath(__file__))
 _start_cache_warming(api_key, _script_dir_early, cache_path)
 
@@ -196,17 +204,27 @@ with st.spinner('Lade Ratings...'):
 script_dir = os.path.dirname(os.path.abspath(__file__))
 david_df, robert_df = load_david_robert(script_dir)
 
-# Warnung für Letterboxd ohne API-Key
-_is_lb = 'lb_rating' in df_raw.columns or ('imdb_rating' not in df_raw.columns and 'Const' not in df_raw.columns)
-_no_imdb = df['imdb_rating'].isna().all() if 'imdb_rating' in df.columns else True
-if _is_lb and _no_imdb and not api_key:
-    st.warning(
-        '⚠️ **Kein TMDB-API-Key gesetzt** — Genres, Regisseure und IMDB-Vergleiche fehlen. '
-        'Dadurch fehlen: Geschmacksbreite, Publikumsgeschmack, Genre-Achievements, Regisseur-Analyse und Abweichungsvergleiche. '
-        'API-Key in der Sidebar eingeben (kostenlos auf [themoviedb.org](https://www.themoviedb.org/settings/api)) '
-        'und CSV erneut hochladen.',
-        icon='🔑'
-    )
+# Warnung für Letterboxd-Exporte ohne IMDB-Daten
+_is_lb   = 'lb_rating' in df_raw.columns
+_no_imdb = 'imdb_rating' not in df.columns or df['imdb_rating'].isna().all()
+if _is_lb and _no_imdb:
+    if not api_key:
+        st.warning(
+            '**Kein TMDB-API-Key gesetzt** — Genres, Regisseure und IMDB-Vergleiche fehlen. '
+            'Dadurch fehlen: Geschmacksbreite, Publikumsgeschmack, Genre-Achievements, '
+            'Regisseur-Analyse und Abweichungsvergleiche. '
+            'API-Key in der Sidebar eingeben (kostenlos auf themoviedb.org) '
+            'und CSV erneut hochladen.',
+            icon='🔑'
+        )
+    else:
+        st.warning(
+            '**TMDB-Anreicherung lieferte keine Daten** — möglicherweise sind die Filme noch nicht im '
+            'Cache und die API hat beim Laden Probleme gehabt. '
+            'Seite neu laden und CSV erneut hochladen. '
+            f'(API-Key ist gesetzt, {len(df)} Filme verarbeitet)',
+            icon='⚠️'
+        )
 
 
 # ── Profil berechnen ──────────────────────────────────────────────
