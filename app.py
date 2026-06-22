@@ -114,6 +114,9 @@ with st.sidebar:
             st.session_state['tmdb_key'] = api_key_input
 
     st.divider()
+    # Cache-Status — Placeholder, wird auch während Enrichment aktualisiert
+    _cache_status = st.empty()
+
     st.markdown(
         '**Letterboxd-Export:**\n'
         'letterboxd.com → Profil → Einstellungen → **Daten** → Export Your Data\n'
@@ -122,9 +125,6 @@ with st.sidebar:
         'imdb.com → Profil → Your ratings → `...` → Export\n'
         '→ CSV direkt hochladen (sofort, kein TMDB nötig)'
     )
-
-    # Cache-Status — Placeholder, wird auch während Enrichment aktualisiert
-    _cache_status = st.empty()
 
 def _update_cache_status(done=None, total=None):
     """Zeigt Enrichment-Fortschritt oder Cache-Größe im Sidebar."""

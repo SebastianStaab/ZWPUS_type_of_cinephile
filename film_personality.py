@@ -155,7 +155,7 @@ def normalize_title(t):
 # DATEN LADEN
 # ─────────────────────────────────────────────────────────────────
 
-def load_imdb_export(path):
+def load_imdb_export(path, cache_path=None):
     """
     Lädt einen IMDB-Ratings-Export (deutsches oder englisches Interface).
     Gibt zwei DataFrames zurück:
