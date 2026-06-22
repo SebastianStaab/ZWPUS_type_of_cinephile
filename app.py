@@ -104,10 +104,13 @@ with st.sidebar:
     birth_year = int(birth_year) if birth_year else None
 
     try:
-        _key_from_secrets = st.secrets['TMDB_API_KEY']
+        _key_from_secrets = st.secrets.get('TMDB_API_KEY', '')
+    except Exception:
+        _key_from_secrets = ''
+    if _key_from_secrets:
         st.session_state['tmdb_key'] = _key_from_secrets
         st.caption('✅ TMDB API-Key konfiguriert')
-    except Exception:
+    else:
         api_key_input = st.text_input('TMDB API-Key', type='password',
                                        help='Kostenlos auf themoviedb.org registrieren')
         if api_key_input:

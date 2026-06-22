@@ -42,7 +42,7 @@ DIM_ZEITGEIST_YEAR     = 2010   # Median-Jahr > X → Zeitgeist
 # Trigger: user_avg_genre - user_gesamt_avg > X  (relativ zum eigenen Schnitt,
 # d.h. strenge Bewerter werden nicht benachteiligt — nur relativ bessere Genres zählen)
 GENRE_DIFF_THRESHOLD = 0.2   # Differenz auf 1-10 Skala
-GENRE_MIN_FILMS      = 5     # Mind. X Filme im Genre
+GENRE_MIN_FILMS      = 3     # Mind. X Filme im Genre
 
 # Bonus-Achievements
 MAINSTREAMER_CORR     = 0.60
@@ -753,7 +753,7 @@ def compute_progressive_achievements(df_raw):
 # 5. TOP / FLOP ANALYSE
 # ─────────────────────────────────────────────────────────────────
 
-def compute_top_flop(df, top_n=3, min_films_genre=5, min_films_dir=3):
+def compute_top_flop(df, top_n=3, min_films_genre=3, min_films_dir=3):
     """
     Genre- und Regisseur-Statistiken.
     adj = (user_avg - imdb_avg) - overall_user_bias
@@ -1028,7 +1028,7 @@ def save_single_dimension_chart(key, df, dims, out_path):
         if not gdf.empty:
             overall_avg = df['user_rating'].mean()
             gs = gdf.groupby('genre').agg(n=('user_rating','count'), avg=('user_rating','mean'))
-            gs = gs[gs['n'] >= 5].copy()
+            gs = gs[gs['n'] >= 3].copy()  # mind. 3 Filme pro Genre
             gs['diff'] = gs['avg'] - overall_avg
             gs = gs.sort_values('diff').tail(12)
             colors = [COLOR_P if v >= 0 else COLOR_N for v in gs['diff']]
