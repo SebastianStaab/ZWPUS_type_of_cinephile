@@ -56,6 +56,7 @@ TMDB_GENRE_MAP = {
 TMDB_BASE   = 'https://api.themoviedb.org/3'
 CACHE_FILE  = 'tmdb_cache.json'
 DELAY       = 0.25   # seconds between API requests (polite)
+DELAY_WARM  = 1.0    # Langsamere Rate für Background-Warming
 
 # ── IMDB-Genre (EN) → Deutsch ─────────────────────────────────────
 IMDB_GENRE_DE = {
@@ -183,14 +184,20 @@ def _search_movie(title, year, api_key, session):
     if year and str(year) not in ('nan', '0', ''):
         params['year'] = int(year)
 
-    try:
-        r = session.get(f'{TMDB_BASE}/search/movie', params=params, timeout=10)
-        r.raise_for_status()
-        results = r.json().get('results', [])
-    except Exception as _e:
-        print(f'  TMDB search FEHLER [{title}]: {type(_e).__name__}: {_e}')
-        if hasattr(_e, 'response') and _e.response is not None:
-            print(f'  HTTP {_e.response.status_code}: {_e.response.text[:200]}')
+    for _attempt in range(3):
+        try:
+            r = session.get(f'{TMDB_BASE}/search/movie', params=params, timeout=10)
+            if r.status_code == 429:
+                time.sleep(2 ** _attempt)  # 1s, 2s, 4s backoff
+                continue
+            r.raise_for_status()
+            results = r.json().get('results', [])
+            break
+        except Exception as _e:
+            if _attempt == 2:
+                return None
+            time.sleep(1)
+    else:
         return None
 
     if not results:
@@ -294,6 +301,8 @@ def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None):
 
         if progress_cb:
             progress_cb(i + 1, total)
+        if new_entries > 0 and new_entries % 5 == 0:
+            time.sleep(0.1)  # kurze Pause gegen Rate-Limiting
 
     if new_entries > 0:
         save_cache(cache, cache_path)  # silent on error

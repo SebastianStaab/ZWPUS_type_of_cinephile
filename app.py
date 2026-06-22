@@ -184,8 +184,8 @@ try:
     cache_path = _cache_app
 except Exception:
     cache_path = _cache_tmp  # Streamlit Cloud: App-Dir ist read-only
-_script_dir_early = os.path.dirname(os.path.abspath(__file__))
-_start_cache_warming(api_key, _script_dir_early, cache_path)
+# Cache-Warming deaktiviert: auf Streamlit Cloud persisitiert /tmp nicht,
+# und der Warming-Thread konkurriert mit User-Enrichment um TMDB Rate-Limit.
 
 # Datei in temporären Pfad schreiben
 tmp_path = '/tmp/ratings_upload.csv'
