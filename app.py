@@ -116,8 +116,11 @@ with st.sidebar:
     st.divider()
     st.markdown(
         '**Letterboxd-Export:**\n'
-        'letterboxd.com → Profil → Einstellungen → Daten → Export\n\n'
-        '**IMDB-Export** wird ebenfalls unterstützt.'
+        'letterboxd.com → Profil → Einstellungen → **Daten** → Export Your Data\n'
+        '→ ZIP öffnen → `ratings.csv` hochladen\n\n'
+        '**IMDB-Export:**\n'
+        'imdb.com → Profil → Your ratings → `...` → Export\n'
+        '→ CSV direkt hochladen (sofort, kein TMDB nötig)'
     )
 
     # Cache-Status
@@ -246,15 +249,30 @@ with col_right:
             f"Positive Zahl = du bewertest Filme aus deinen prägenden Jahren **besser** als den Rest. "
             f"Bias wird relativ zum IMDB-Schnitt gemessen, um Ären-Unterschiede herauszurechnen."
         )
-        mc1, mc2, mc3 = st.columns(3)
-        mc1.metric('Bias', f"{fs['bias']:+.2f}", help='Positiv = Nostalgiker')
-        mc2.metric('Formative Filme', fs['n_form'])
-        mc3.metric('p-Wert', f"{fs['p_value']:.3f}")
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric(
+            'Bias (IMDB-rel.)' if fs.get('has_imdb') else 'Bias (roh)',
+            f"{fs['bias']:+.2f}",
+            help='Positiv = Nostalgiker. IMDB-bereinigt = Ären-Unterschiede herausgerechnet.',
+        )
+        if fs.get('has_imdb') and fs.get('bias_raw') is not None:
+            mc2.metric(
+                'Bias (roh)', f"{fs['bias_raw']:+.2f}",
+                help='Wie viel besser du Filme aus deinen prägenden Jahren bewertest — ohne IMDB-Korrektur.',
+            )
+        else:
+            mc2.metric('Prägende Filme', fs['n_form'])
+        mc3.metric(
+            "Cohen's d", f"{fs['cohens_d']:+.2f}",
+            help='Effektgröße: |d|<0.5 = klein, 0.5–0.8 = mittel, >0.8 = groß. Aussagekräftiger als p-Wert bei kleinen Stichproben.',
+        )
+        mc4.metric('p-Wert', f"{fs['p_value']:.3f}")
+        _effect_color = 'green' if abs(fs['cohens_d']) >= 0.5 else 'gray'
+        _d_label = fs.get('effect_label', '')
         st.caption(
-            f"Ø formativ: {fs['form_avg']:.2f} | Ø Rest: {fs['nonform_avg']:.2f} | "
-            f"t={fs['t_stat']:.2f} | "
-            f":{'green' if fs['significant'] else 'gray'}[{sig_text}] — "
-            f"{'Statistisch belastbar.' if fs['significant'] else 'Effekt zu klein oder zu wenig Daten.'}"
+            f"n={fs['n_form']} Formativfilme | Ø formativ: {fs['form_avg']:.2f} | Ø Rest: {fs['nonform_avg']:.2f} | "
+            f"t={fs['t_stat']:.2f} | :{_effect_color}[Effekt {_d_label}] | "
+            f":{'green' if fs['significant'] else 'gray'}[{sig_text}]"
         )
         if birth_year:
             _form_chart = '/tmp/formative_chart.png'
@@ -270,12 +288,13 @@ with col_right:
 # ── LINKS: Persönlichkeitsprofil mit Dimension-Charts ────────────
 with col_left:
     st.subheader('🧠 Persönlichkeitsprofil')
-    dim_order = ['bewertungsstil', 'meinungsstaerke', 'geschmacksbreite', 'epoche']
+    dim_order = ['bewertungsstil', 'meinungsstaerke', 'geschmacksbreite', 'epoche', 'publikum']
     dim_labels = {
         'bewertungsstil':   'Bewertungsstil',
         'meinungsstaerke':  'Meinungsstärke',
         'geschmacksbreite': 'Geschmacksbreite',
         'epoche':           'Lieblingsepoche',
+        'publikum':         'Publikumsgeschmack',
     }
     for key in dim_order:
         if key in dims:
@@ -340,7 +359,6 @@ if 'dir_all' in topflop and not topflop['dir_all'].empty:
                 _films = _dir_films(d)
                 if not _films.empty:
                     st.dataframe(_films.style.format(precision=1), use_container_width=True, hide_index=True)
-
     with dcol2:
         st.markdown('**Flop 3**')
         for d, row in topflop['dir_flop'].head(3).iterrows():
@@ -348,6 +366,120 @@ if 'dir_all' in topflop and not topflop['dir_all'].empty:
                 _films = _dir_films(d)
                 if not _films.empty:
                     st.dataframe(_films.style.format(precision=1), use_container_width=True, hide_index=True)
+
+# ── Größte Abweichungen ───────────────────────────────────────────
+st.divider()
+st.subheader('📐 Größte Abweichungen')
+
+_has_imdb_dev = 'imdb_rating' in df.columns and df['imdb_rating'].notna().sum() >= 5
+_has_david    = david_df is not None and not david_df.empty
+_has_robert   = robert_df is not None and not robert_df.empty
+
+if _has_imdb_dev or _has_david or _has_robert:
+    _dev_cols = []
+    if _has_imdb_dev: _dev_cols.append('vs. IMDB')
+    if _has_david:    _dev_cols.append('vs. David')
+    if _has_robert:   _dev_cols.append('vs. Robert')
+    _dev_tab_labels = _dev_cols
+    _dev_tabs = st.tabs(_dev_tab_labels)
+
+    def _deviation_table(left_df, right_series, label, n=5):
+        """Gibt top-n positive und negative Abweichungen zurück."""
+        merged = left_df[['title', 'year', 'user_rating']].copy()
+        merged = merged[merged['title'].notna()].copy()
+        if hasattr(right_series, 'name'):
+            merged['_other'] = merged['title'].map(
+                right_series.reset_index().set_index(right_series.index.name or 'index')[right_series.name]
+                if hasattr(right_series.index, 'name') else right_series
+            )
+        else:
+            merged['_other'] = right_series.values if len(right_series) == len(merged) else float('nan')
+        merged = merged.dropna(subset=['_other'])
+        merged['diff'] = merged['user_rating'] - merged['_other']
+        merged = merged.rename(columns={'title': 'Titel', 'year': 'Jahr',
+                                        'user_rating': 'Eigene', '_other': label})
+        merged['Diff'] = merged['diff']
+        top    = merged.nlargest(n, 'diff')[['Titel', 'Jahr', 'Eigene', label, 'Diff']]
+        bottom = merged.nsmallest(n, 'diff')[['Titel', 'Jahr', 'Eigene', label, 'Diff']]
+        return top, bottom
+
+    def _style_diff(df_s):
+        return df_s.style.map(
+            lambda v: 'color: #4caf50; font-weight: bold' if isinstance(v, float) and v > 0
+                 else ('color: #f44336; font-weight: bold' if isinstance(v, float) and v < 0 else ''),
+            subset=['Diff']
+        ).format({'Eigene': '{:.1f}', 'Diff': '{:+.1f}'}, na_rep='—')
+
+    _tab_idx = 0
+
+    if _has_imdb_dev:
+        with _dev_tabs[_tab_idx]:
+            _tab_idx += 1
+            _diff_series = df['imdb_rating'].copy()
+            _diff_series.index = df.index
+            _df_dev = df[['title', 'year', 'user_rating']].copy()
+            _df_dev['_other'] = df['imdb_rating']
+            _df_dev = _df_dev.dropna(subset=['_other'])
+            _df_dev['diff'] = _df_dev['user_rating'] - _df_dev['_other']
+            _top_imdb    = _df_dev.nlargest(5, 'diff').rename(
+                columns={'title': 'Titel', 'year': 'Jahr', 'user_rating': 'Eigene', '_other': 'IMDB', 'diff': 'Diff'})
+            _bottom_imdb = _df_dev.nsmallest(5, 'diff').rename(
+                columns={'title': 'Titel', 'year': 'Jahr', 'user_rating': 'Eigene', '_other': 'IMDB', 'diff': 'Diff'})
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown('**⬆️ Du liebst, was andere nicht mögen**')
+                st.dataframe(_style_diff(_top_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]).format(
+                    {'IMDB': '{:.1f}'}), use_container_width=True, hide_index=True)
+            with c2:
+                st.markdown('**⬇️ Du magst nicht, was andere feiern**')
+                st.dataframe(_style_diff(_bottom_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]).format(
+                    {'IMDB': '{:.1f}'}), use_container_width=True, hide_index=True)
+
+    def _vs_person(person_df, person_col, tab):
+        """Abweichungen vs. David oder Robert (join über title_norm, Ratings auf 1–10)."""
+        if person_df is None or person_df.empty:
+            return
+        # person_df hat title_norm + david_rating / robert_rating (1-10)
+        _pcol_rating = 'david_rating' if 'david_rating' in person_df.columns else 'robert_rating'
+        _pmap = person_df.set_index('title_norm')[_pcol_rating].to_dict()
+        _merged = df[['title', 'year', 'user_rating', 'title_norm']].copy() \
+                  if 'title_norm' in df.columns else df[['title', 'year', 'user_rating']].copy()
+        if 'title_norm' not in _merged.columns:
+            from film_personality import normalize_title as _nt
+            _merged['title_norm'] = _merged['title'].apply(_nt)
+        _merged['_prating'] = _merged['title_norm'].map(_pmap)
+        _merged = _merged.dropna(subset=['_prating'])
+        if _merged.empty:
+            with tab:
+                st.info(f'Keine gemeinsamen Filme mit {person_col} gefunden.')
+            return
+        _merged['diff'] = _merged['user_rating'] - _merged['_prating']
+        _top    = _merged.nlargest(5, 'diff').rename(
+            columns={'title': 'Titel', 'year': 'Jahr', 'user_rating': 'Eigene',
+                     '_prating': person_col, 'diff': 'Diff'})
+        _bottom = _merged.nsmallest(5, 'diff').rename(
+            columns={'title': 'Titel', 'year': 'Jahr', 'user_rating': 'Eigene',
+                     '_prating': person_col, 'diff': 'Diff'})
+        with tab:
+            st.caption(f'{len(_merged)} gemeinsame Filme gefunden.')
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f'**⬆️ Du magst deutlich mehr als {person_col}**')
+                st.dataframe(_style_diff(_top[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]).format(
+                    {person_col: '{:.1f}'}), use_container_width=True, hide_index=True)
+            with c2:
+                st.markdown(f'**⬇️ Du magst deutlich weniger als {person_col}**')
+                st.dataframe(_style_diff(_bottom[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]).format(
+                    {person_col: '{:.1f}'}), use_container_width=True, hide_index=True)
+
+    if _has_david:
+        _vs_person(david_df, 'David', _dev_tabs[_tab_idx])
+        _tab_idx += 1
+    if _has_robert:
+        _vs_person(robert_df, 'Robert', _dev_tabs[_tab_idx])
+
+else:
+    st.info('Keine IMDB-Daten verfügbar für Abweichungsanalyse — TMDB-Key eingeben oder IMDB-Export hochladen.')
 
 # ── Footer ────────────────────────────────────────────────────────
 st.divider()

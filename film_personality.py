@@ -31,8 +31,8 @@ from collections import Counter
 # Persoehnlichkeitsdimensionen
 DIM_STRENG_THRESHOLD   = -0.5   # Ø(user - imdb) < X → Streng
 DIM_MILD_THRESHOLD     =  0.5   # Ø(user - imdb) > X → Mild
-DIM_POLAR_THRESHOLD    =  1.8   # std(user) > X → Polarisierer
-DIM_DIPLO_THRESHOLD    =  1.0   # std(user) < X → Diplomat
+DIM_POLAR_THRESHOLD    =  5.0   # MSE(user−IMDB) > X → Polarisierer  (≈ σ 2.2²)
+DIM_DIPLO_THRESHOLD    =  1.5   # MSE(user−IMDB) < X → Diplomat     (≈ σ 1.2²)
 DIM_SPEZIALIST_ENTROPY = 0.70   # normierte Genre-Entropie < X → Spezialist
 DIM_OMNIVORE_ENTROPY   = 0.88   # normierte Genre-Entropie > X → Omnivore
 DIM_KLASSIKER_YEAR     = 1995   # Median-Jahr < X → Klassiker
@@ -94,7 +94,7 @@ SERIES_MILESTONES = [
 GENRE_ACHIEVEMENTS = {
     'Action':         ('🥋', 'Karate-Tiger',         'Explosivstoffe und Fäuste — du liebst es.'),
     'Abenteuer':      ('🤠', 'Indiana Jones',          'Auf ins Abenteuer. Hut aufsetzen nicht vergessen.'),
-    'Animation':      ('🧸', 'The superior way of telling Fantasy',            'Pixar bringt dich zum Weinen. Das ist okay.'),
+    'Animation':      ('🧸', 'The superior way of telling Fantasy',            'Gezeichnet, animiert oder gerendert — für dich ist das Leinwand auf Augenhöhe mit Realfilm.'),
     'Biografie':      ('📖', 'True Story',        '"Basiert auf wahren Begebenheiten" reicht dir als Kaufargument.'),
     'Dokumentarfilm': ('📹', 'Doku Dealer',            'Arte läuft bei dir rund um die Uhr.'),
     'Drama':          ('😭', 'Drama Queen',         'Du leidest gerne. Cineastisch gesehen.'),
@@ -251,6 +251,8 @@ def load_letterboxd_export(path, api_key=None, cache_path=None, progress_cb=None
             raw = enrich_letterboxd(raw, api_key, cache_path=cache_path, progress_cb=progress_cb)
             if 'tmdb_rating' in raw.columns:
                 raw['imdb_rating'] = pd.to_numeric(raw['tmdb_rating'], errors='coerce')
+            if 'vote_count' in raw.columns:
+                raw['num_votes'] = pd.to_numeric(raw['vote_count'], errors='coerce')
         except ImportError:
             print('  Warnung: tmdb_enrich.py nicht gefunden — keine Genres/Regisseure')
     else:
@@ -389,18 +391,33 @@ def compute_dimensions(df):
                                'label': 'Bewertungsstil', 'emoji': '🎯'}
 
     # ── D2: Diplomat ↔ Polarisierer ──────────────────────────────
-    # Standardabweichung der eigenen Ratings — hoch = viele Extreme
-    std = df['user_rating'].std()
-    if std > DIM_POLAR_THRESHOLD:
+    # σ(user−IMDB): misst Inkonsistenz der eigenen Abweichungen vom Konsens —
+    # nicht ob man generell streng/mild ist (das ist D1), sondern ob man bei
+    # manchen Filmen stark abweicht und bei anderen gar nicht.
+    # Fallback auf σ(own ratings) wenn keine IMDB-Daten.
+    # MSE(user−IMDB): große Abweichungen werden quadratisch stärker gewichtet.
+    # Fallback auf MSE(own ratings − mean) wenn keine IMDB-Daten.
+    has_imdb_d2 = 'imdb_rating' in df.columns and df['imdb_rating'].notna().sum() >= 10
+    if has_imdb_d2:
+        _diff_d2 = (df['user_rating'] - df['imdb_rating']).dropna()
+        mse = float((_diff_d2 ** 2).mean())
+        _mse_label = 'MSE(user−IMDB)'
+    else:
+        _mean_r = df['user_rating'].mean()
+        mse = float(((df['user_rating'] - _mean_r) ** 2).mean())
+        _mse_label = 'MSE'
+    if mse > DIM_POLAR_THRESHOLD:
         pole = 'Polarisierer'
-        desc = f'Du liebst Extreme: viele 1er und 10er (σ={std:.2f}).'
-    elif std < DIM_DIPLO_THRESHOLD:
+        desc = (f'Deine Abweichungen von IMDB sind sehr inkonsistent — bei manchen Filmen '
+                f'liebst du, was andere hassen, und umgekehrt ({_mse_label}={mse:.2f}).')
+    elif mse < DIM_DIPLO_THRESHOLD:
         pole = 'Diplomat'
-        desc = f'Du bewertest sehr konsistent im Mittelfeld (σ={std:.2f}).'
+        desc = (f'Du bewertest Filme sehr ähnlich wie der IMDB-Konsens — '
+                f'kein starkes Außenseiterprofil ({_mse_label}={mse:.2f}).')
     else:
         pole = 'Ausgewogen'
-        desc = f'Weder Extremist noch Langweiler (σ={std:.2f}).'
-    dims['meinungsstaerke'] = {'pole': pole, 'score': round(std, 3), 'desc': desc,
+        desc = f'Weder durchgehend Abweichler noch IMDB-Klon ({_mse_label}={mse:.2f}).'
+    dims['meinungsstaerke'] = {'pole': pole, 'score': round(mse, 3), 'desc': desc,
                                 'label': 'Meinungsstärke', 'emoji': '💥'}
 
     # ── D3: Spezialist ↔ Omnivore ────────────────────────────────
@@ -438,7 +455,34 @@ def compute_dimensions(df):
             pole = 'Ausgewogen'
             desc = f'Du schaust quer durch die Jahrzehnte (Medianjahr: {med_year}).'
         dims['epoche'] = {'pole': pole, 'score': med_year, 'desc': desc,
-                           'label': 'Lieblingsepoche', 'emoji': '?'}
+                           'label': 'Lieblingsepoche', 'emoji': '🕰️'}
+
+    # ── D5: Blockbuster ↔ Arthouse ────────────────────────────────────
+    if 'num_votes' in df.columns and df['num_votes'].notna().sum() >= 20:
+        overall_bias_d5 = float((df['user_rating'] - df['imdb_rating']).mean())
+        bb  = df[(df['num_votes'] >= BLOCKBUSTER_VOTES) & df['imdb_rating'].notna()]
+        art = df[(df['num_votes'] <= ARTHOUSE_VOTES)    & df['imdb_rating'].notna()]
+        if len(bb) >= 10 and len(art) >= 5:
+            bb_adj  = float((bb['user_rating']  - bb['imdb_rating']).mean())  - overall_bias_d5
+            art_adj = float((art['user_rating'] - art['imdb_rating']).mean()) - overall_bias_d5
+            score   = round(bb_adj - art_adj, 3)   # positiv = mag Blockbuster relativ mehr
+            if score > 0.4:
+                pole = 'Blockbuster-Fan'
+                desc = (f'Du bewertest große Kassenschlager (>{BLOCKBUSTER_VOTES//1000}k Votes) '
+                        f'relativ {score:.2f} Punkte besser als Arthouse-Filme '
+                        f'(n_bb={len(bb)}, n_art={len(art)}).')
+            elif score < -0.4:
+                pole = 'Arthouse-Aficionado'
+                desc = (f'Du bewertest Nischenfilme (<{ARTHOUSE_VOTES//1000}k Votes) '
+                        f'relativ {abs(score):.2f} Punkte besser als Blockbuster '
+                        f'(n_bb={len(bb)}, n_art={len(art)}).')
+            else:
+                pole = 'Ausgewogen'
+                desc = (f'Kein systematischer Unterschied zwischen Blockbuster- und '
+                        f'Arthouse-Bewertungen (Diff={score:+.2f}, '
+                        f'n_bb={len(bb)}, n_art={len(art)}).')
+            dims['publikum'] = {'pole': pole, 'score': score, 'desc': desc,
+                                'label': 'Publikumsgeschmack', 'emoji': '🎪'}
 
     return dims
 
@@ -581,21 +625,35 @@ def compute_genre_achievements(df):
         sub = gdf[gdf['genre'] == genre]
         if len(sub) < GENRE_MIN_FILMS:
             continue
+
+        # Adaptiver Threshold: Je weniger Filme, desto stärker muss der Effekt sein.
+        # Formel: max(Floor, 0.8 / sqrt(n/5))
+        # n=5→0.80, n=20→0.40, n=80→0.20, n=320→0.10 (Floor)
+        # Floor 0.1: bei ~320+ Filmen in einem Genre reicht eine kleine, aber konsistente Präferenz.
+        n_pos = len(sub)
+        adaptive_pos_threshold = max(0.1, 0.8 / math.sqrt(n_pos / 5))
+
         diff = sub['user_rating'].mean() - overall_avg
-        if diff >= GENRE_DIFF_THRESHOLD:
+        if diff >= adaptive_pos_threshold:
             ach.append({
                 'emoji': emoji, 'name': name,
-                'desc': f'{desc}  [{genre}: Ø{sub["user_rating"].mean():.1f}, +{diff:.1f} über deinem Schnitt, n={len(sub)}]'
+                'desc': f'{desc}  [{genre}: Ø{sub["user_rating"].mean():.1f}, +{diff:.1f} über deinem Schnitt, n={n_pos}]'
             })
-        # Hate achievement: adj <= -0.5 (nur wenn IMDB-Daten vorhanden)
+
+        # Hate achievement (IMDB-relativ, gleiche adaptive Logik mit negiertem Threshold)
         if has_imdb:
             sub_rated = sub[sub['imdb_rating'].notna()]
-            if len(sub_rated) >= GENRE_MIN_FILMS:
+            n_neg = len(sub_rated)
+            if n_neg >= GENRE_MIN_FILMS:
+                # min() weil wir nach unten wollen: n=5→-0.8, n=20→-0.4, floor bei -0.2
+                # Floor -0.2: symmetrisch zum positiven Floor (0.1 wäre zu sensitiv für Hass)
+                adaptive_hate_threshold = min(-0.2, -0.8 / math.sqrt(n_neg / 5))
                 adj = (sub_rated['user_rating'].mean() - sub_rated['imdb_rating'].mean()) - overall_bias
-                if adj <= -0.5:
+                if adj <= adaptive_hate_threshold:
                     ach.append({
                         'emoji': '🚫', 'name': f'hasst {genre}',
-                        'desc': f'{genre}: adj={adj:+.2f} — du magst dieses Genre deutlich weniger als dein Gesamtprofil erwarten lässt. (n={len(sub_rated)})'
+                        'desc': (f'{genre}: adj={adj:+.2f} — du magst dieses Genre deutlich weniger als '
+                                 f'dein Gesamtprofil erwarten lässt. (n={n_neg})')
                     })
     return ach
 
@@ -797,19 +855,33 @@ def compute_formative_years_stats(df, birth_year):
         import math
         p_value = float(2 * (1 - 0.5 * (1 + math.erf(abs(t_stat) / math.sqrt(2)))))
 
+    # Cohen's d (gepoolte Standardabweichung) — Effektgröße unabhängig von n
+    pooled_std = np.sqrt((v1 * (n1 - 1) + v2 * (n2 - 1)) / (n1 + n2 - 2))
+    cohens_d   = bias / pooled_std if pooled_std > 0 else 0.0
+    effect_label = 'groß' if abs(cohens_d) >= 0.8 else 'mittel' if abs(cohens_d) >= 0.5 else 'klein'
+
+    # Rohrating-Bias (immer berechnen, auch wenn IMDB-Methode verwendet wird)
+    form_raw    = df[df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
+    nonform_raw = df[~df['year'].between(form_start, form_end - 1)]['user_rating'].dropna()
+    bias_raw = float(form_raw.mean() - nonform_raw.mean()) \
+               if len(form_raw) >= 3 and len(nonform_raw) >= 3 else None
+
     return {
-        'bias':        bias,
-        'n_form':      n1,
-        'n_nonform':   n2,
-        'form_avg':    m1,
-        'nonform_avg': m2,
-        't_stat':      t_stat,
-        'p_value':     p_value,
-        'significant': p_value < 0.05,
-        'form_start':  form_start,
-        'form_end':    form_end - 1,
-        'method':      method,
-        'has_imdb':    has_imdb,
+        'bias':         bias,
+        'bias_raw':     round(bias_raw, 3) if bias_raw is not None else None,
+        'n_form':       n1,
+        'n_nonform':    n2,
+        'form_avg':     m1,
+        'nonform_avg':  m2,
+        't_stat':       t_stat,
+        'p_value':      p_value,
+        'significant':  p_value < 0.05,
+        'cohens_d':     round(cohens_d, 3),
+        'effect_label': effect_label,
+        'form_start':   form_start,
+        'form_end':     form_end - 1,
+        'method':       method,
+        'has_imdb':     has_imdb,
     }
 
 
@@ -923,7 +995,8 @@ def save_single_dimension_chart(key, df, dims, out_path):
             ax.axvline(diff.mean(), color='#ffd700', lw=1.8, alpha=0.9, zorder=5)
             ymax2 = ax.get_ylim()[1]
             ax.text(diff.mean() + 0.2, ymax2 * 0.85, f'Ø {diff.mean():+.2f}', color='#ffd700', fontsize=8.5)
-            ax.text(0.97, 0.93, f'σ={diff.std():.2f}', transform=ax.transAxes,
+            _mse_val = float((diff ** 2).mean())
+            ax.text(0.97, 0.93, f'MSE={_mse_val:.2f}', transform=ax.transAxes,
                     color='#aaaaaa', fontsize=8, ha='right', va='top')
         _style(f'Meinungsstärke — {pole}', 'Eigene − IMDB', 'Filme')
 
@@ -956,6 +1029,33 @@ def save_single_dimension_chart(key, df, dims, out_path):
             ax.set_xticks(dc.index)
             ax.set_xticklabels([f"{d}s" for d in dc.index], rotation=35, ha='right', fontsize=7.5)
         _style(f'Lieblingsepoche — {pole}', '', 'Filme')
+
+    elif key == 'publikum':
+        if 'num_votes' in df.columns and df['num_votes'].notna().sum() >= 10:
+            from film_personality import BLOCKBUSTER_VOTES, ARTHOUSE_VOTES
+            overall_bias = float((df['user_rating'] - df['imdb_rating']).mean())
+            cats = [
+                ('Arthouse\n(<50k Votes)',  df[df['num_votes'] <= ARTHOUSE_VOTES]),
+                ('Mitte\n(50k–500k)',        df[(df['num_votes'] > ARTHOUSE_VOTES) & (df['num_votes'] < BLOCKBUSTER_VOTES)]),
+                ('Blockbuster\n(>500k Votes)', df[df['num_votes'] >= BLOCKBUSTER_VOTES]),
+            ]
+            labels_c, adjs, ns = [], [], []
+            for lbl, sub in cats:
+                sub = sub.dropna(subset=['user_rating', 'imdb_rating'])
+                if len(sub) >= 3:
+                    labels_c.append(lbl)
+                    adjs.append((sub['user_rating'] - sub['imdb_rating']).mean() - overall_bias)
+                    ns.append(len(sub))
+            if labels_c:
+                bar_colors = [COLOR_P if v >= 0 else COLOR_N for v in adjs]
+                ax.bar(range(len(labels_c)), adjs, color=bar_colors, alpha=0.85, width=0.55, zorder=3)
+                ax.axhline(0, color='white', lw=1, alpha=0.5, zorder=4)
+                ax.set_xticks(range(len(labels_c)))
+                ax.set_xticklabels(labels_c, fontsize=8.5, color=TEXT)
+                for i, (adj, n) in enumerate(zip(adjs, ns)):
+                    ax.text(i, adj + (0.02 if adj >= 0 else -0.04),
+                            f'n={n}', ha='center', color='#aaaaaa', fontsize=7.5)
+        _style(f'Publikumsgeschmack — {pole}', '', 'Adj. Rating')
 
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
@@ -1093,24 +1193,30 @@ def save_radar_chart(name, dims, out_path):
             # streng (negativ) = außen (1), mild (positiv) = innen (0)
             return max(0.0, min(1.0, (-score + 3) / 6))
         elif key == 'meinungsstaerke':
-            # score ist std, Bereich ca. 0 bis 3
-            return max(0.0, min(1.0, score / 3))
+            # score ist MSE(user−IMDB), Bereich ca. 0 bis 9 (RMSE≈3 = extreme Abweichung)
+            return max(0.0, min(1.0, score / 9.0))
         elif key == 'geschmacksbreite':
             # score ist normierte Entropie [0, 1]
             return max(0.0, min(1.0, score))
         elif key == 'epoche':
             # score ist Medianjahr, Bereich 1960–2025
             return max(0.0, min(1.0, (score - 1960) / 65))
+        elif key == 'publikum':
+            # score: Blockbuster-adj − Arthouse-adj, Bereich ca. -2 bis +2
+            return max(0.0, min(1.0, (score + 2) / 4))
         return 0.5
 
-    labels = ['Streng\n(Bewertungsstil)', 'Polarisierer\n(Meinungsstaerke)',
-              'Omnivore\n(Geschmack)', 'Zeitgeist\n(Epoche)']
-    scores = [
-        norm_score('bewertungsstil',   dims),
-        norm_score('meinungsstaerke',  dims),
-        norm_score('geschmacksbreite', dims),
-        norm_score('epoche',           dims),
+    _dim_cfg = [
+        ('bewertungsstil',   'Streng\n(Bewertungsstil)',   'Mild'),
+        ('meinungsstaerke',  'Polarisierer\n(Meinung)',      'Diplomat'),
+        ('geschmacksbreite', 'Omnivore\n(Geschmack)',       'Spezialist'),
+        ('epoche',           'Zeitgeist\n(Epoche)',          'Klassiker'),
+        ('publikum',         'Blockbuster\n(Publikum)',      'Arthouse'),
     ]
+    _dim_cfg = [(k, lo, hi) for k, lo, hi in _dim_cfg if k in dims]
+    labels        = [lo for _, lo, _ in _dim_cfg]
+    counter_labels_dyn = [hi for _, _, hi in _dim_cfg]
+    scores = [norm_score(k, dims) for k, _, _ in _dim_cfg]
 
     n = len(labels)
     angles = [i * 2 * 3.14159265 / n for i in range(n)] + [0]
@@ -1126,8 +1232,7 @@ def save_radar_chart(name, dims, out_path):
     ax.set_yticklabels([])
     ax.set_ylim(0, 1)
 
-    counter_labels = ['Mild', 'Diplomat', 'Spezialist', 'Klassiker']
-    for angle, clabel in zip(angles[:-1], counter_labels):
+    for angle, clabel in zip(angles[:-1], counter_labels_dyn):
         ax.text(angle, 0.08, clabel, ha='center', va='center',
                 fontsize=10, color='grey')
 
