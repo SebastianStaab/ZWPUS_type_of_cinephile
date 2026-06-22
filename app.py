@@ -105,11 +105,8 @@ with st.sidebar:
 
     try:
         _key_from_secrets = st.secrets['TMDB_API_KEY']
-        if _key_from_secrets:
-            st.session_state['tmdb_key'] = _key_from_secrets
-            st.caption('✅ TMDB API-Key konfiguriert')
-        else:
-            raise ValueError('leer')
+        st.session_state['tmdb_key'] = _key_from_secrets
+        st.caption('✅ TMDB API-Key konfiguriert')
     except Exception:
         api_key_input = st.text_input('TMDB API-Key', type='password',
                                        help='Kostenlos auf themoviedb.org registrieren')
@@ -126,15 +123,30 @@ with st.sidebar:
         '→ CSV direkt hochladen (sofort, kein TMDB nötig)'
     )
 
-    # Cache-Status
-    _cpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmdb_cache.json')
-    try:
-        import json as _json
-        _n = len(_json.load(open(_cpath)))
-        st.caption(f'📦 TMDB-Cache: {_n} Filme gecacht')
-    except Exception:
-        if _cache_warmed:
-            st.caption('⏳ Cache wird vorbereitet...')
+    # Cache-Status — Placeholder, wird auch während Enrichment aktualisiert
+    _cache_status = st.empty()
+
+def _update_cache_status(done=None, total=None):
+    """Zeigt Enrichment-Fortschritt oder Cache-Größe im Sidebar."""
+    import json as _j
+    _cpath_app = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmdb_cache.json')
+    _cpath_tmp = '/tmp/tmdb_cache.json'
+    _n = 0
+    for _cp in [_cpath_app, _cpath_tmp]:
+        try:
+            _n = max(_n, len(_j.load(open(_cp))))
+        except Exception:
+            pass
+    if done is not None and total:
+        _cache_status.caption(f'🔄 TMDB lädt: {done}/{total} Filme… (Cache: {_n})')
+    elif _n > 0:
+        _cache_status.caption(f'📦 TMDB-Cache: {_n} Filme gecacht')
+    elif _cache_warmed:
+        _cache_status.caption('⏳ Cache wird vorbereitet...')
+    else:
+        _cache_status.caption('📦 TMDB-Cache: leer')
+
+_update_cache_status()
 
 # ── Hauptbereich ──────────────────────────────────────────────────
 st.title('🎬 Zwei wie Pech & Schwafel')
@@ -188,9 +200,11 @@ def _tmdb_progress(done, total):
     pct = done / total if total else 0
     _prog_bar.progress(pct)
     _prog_text.caption(f'🎬 TMDB-Anreicherung: {done}/{total} Filme geladen…')
+    _update_cache_status(done, total)
     if done == total:
         _prog_bar.empty()
         _prog_text.empty()
+        _update_cache_status()  # finale Cache-Größe
 
 with st.spinner('Lade Ratings...'):
     try:
