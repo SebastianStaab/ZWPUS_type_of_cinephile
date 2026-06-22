@@ -246,7 +246,7 @@ def _get_credits(movie_id, api_key, session):
         return []
 
 
-def enrich_one(title, year, api_key, session):
+def enrich_one(title, year, api_key, session, api_delay=None):
     """
     Fragt TMDB für einen Film ab.
     Gibt Dict zurück: {tmdb_id, tmdb_rating, vote_count, genres, directors}
@@ -262,7 +262,7 @@ def enrich_one(title, year, api_key, session):
     genre_ids   = result.get('genre_ids', [])
     genres      = [TMDB_GENRE_MAP[g] for g in genre_ids if g in TMDB_GENRE_MAP]
 
-    time.sleep(DELAY)
+    time.sleep(api_delay if api_delay is not None else DELAY)
     directors = _get_credits(movie_id, api_key, session)
 
     return {
@@ -276,7 +276,7 @@ def enrich_one(title, year, api_key, session):
 
 # ── Hauptfunktion ─────────────────────────────────────────────────
 
-def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None):
+def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None, api_delay=None):
     """
     Reichert einen Letterboxd-DataFrame mit TMDB-Daten an.
 
@@ -299,7 +299,7 @@ def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None):
         key = _cache_key(row.get('title', ''), row.get('year', 0))
 
         if key not in cache:
-            data = enrich_one(row.get('title', ''), row.get('year'), api_key, session)
+            data = enrich_one(row.get('title', ''), row.get('year'), api_key, session, api_delay=api_delay)
             cache[key] = data or {}
             new_entries += 1
             if new_entries % 20 == 0:

@@ -47,18 +47,10 @@ def _start_cache_warming(api_key, script_dir, cache_path):
 
     def _warm():
         try:
-            import json
+            from tmdb_enrich import load_cache, enrich_letterboxd, DELAY_WARM
             # Schon warm genug?
-            try:
-                with open(cache_path) as _f:
-                    _data = json.load(_f)
-                if len(_data) > 1000:
-                    return
-            except Exception:
-                pass
-
-            from tmdb_enrich import enrich_letterboxd
-
+            if len(load_cache(cache_path)) > 2000:
+                return
             for fname in ['david_ratings.csv', 'robert_ratings.csv']:
                 fpath = os.path.join(script_dir, fname)
                 if not os.path.exists(fpath):
@@ -68,8 +60,9 @@ def _start_cache_warming(api_key, script_dir, cache_path):
                     df_w['user_rating'] = df_w['rating'] * 2
                 if 'title' not in df_w.columns and len(df_w.columns) > 1:
                     df_w = df_w.rename(columns={df_w.columns[1]: 'title'})
+                # DELAY_WARM (1.0s) statt DELAY (0.25s) → kein Rate-Limit-Konflikt
                 enrich_letterboxd(df_w, api_key, cache_path=cache_path,
-                                  progress_cb=None)
+                                  progress_cb=None, api_delay=DELAY_WARM)
         except Exception:
             pass   # Warming-Fehler sind nicht kritisch
 
@@ -95,7 +88,7 @@ with st.sidebar:
     st.image('https://img.shields.io/badge/Zwei%20wie%20Pech%20%26%20Schwafel-%F0%9F%8E%AC-red',
              use_container_width=True)
     st.title('🎬 Film Personality')
-    st.caption('Powered by Letterboxd + TMDB')
+    st.caption('Powered by Letterboxd + IMDB + TMDB')
     st.divider()
 
     name       = st.text_input('Dein Name', value='')
@@ -141,6 +134,27 @@ def _update_cache_status(done=None, total=None):
 
 _update_cache_status()
 
+# ── API-Key + Cache-Pfad (früh, damit Warming vor st.stop() starten kann) ──
+try:
+    api_key = (st.secrets['TMDB_API_KEY'] or '').strip()
+except Exception:
+    api_key = st.session_state.get('tmdb_key', '')
+
+_app_dir   = os.path.dirname(os.path.abspath(__file__))
+_cache_app = os.path.join(_app_dir, 'tmdb_cache.json')
+_cache_tmp = '/tmp/tmdb_cache.json'
+try:
+    import tempfile as _tf
+    _tf_fd, _tf_path = _tf.mkstemp(dir=_app_dir)
+    os.close(_tf_fd)
+    os.unlink(_tf_path)
+    cache_path = _cache_app
+except Exception:
+    cache_path = _cache_tmp
+
+# Cache-Warming: startet beim App-Load (vor File-Upload), damit keine Konkurrenz
+_start_cache_warming(api_key, _app_dir, cache_path)
+
 # ── Hauptbereich ──────────────────────────────────────────────────
 st.title('🎬 Zwei wie Pech & Schwafel')
 st.subheader('Dein Film-Persönlichkeitstest')
@@ -165,26 +179,6 @@ if not uploaded:
     st.stop()
 
 # ── Daten laden ───────────────────────────────────────────────────
-# Secrets haben Priorität — Session-State nur als Fallback für manuelle Eingabe
-try:
-    api_key = (st.secrets['TMDB_API_KEY'] or '').strip()
-except Exception:
-    api_key = st.session_state.get('tmdb_key', '')
-# Cache-Pfad: App-Verzeichnis wenn schreibbar (lokal), sonst /tmp (Streamlit Cloud)
-_app_dir   = os.path.dirname(os.path.abspath(__file__))
-_cache_app = os.path.join(_app_dir, 'tmdb_cache.json')
-_cache_tmp = '/tmp/tmdb_cache.json'
-try:
-    # Echter Write-Test: nicht nur open('a') (öffnet auch read-only Dateien)
-    import tempfile as _tf
-    _tf_fd, _tf_path = _tf.mkstemp(dir=_app_dir)
-    os.close(_tf_fd)
-    os.unlink(_tf_path)
-    cache_path = _cache_app
-except Exception:
-    cache_path = _cache_tmp  # Streamlit Cloud: App-Dir ist read-only → /tmp nutzen
-# Cache-Warming deaktiviert: auf Streamlit Cloud persisitiert /tmp nicht,
-# und der Warming-Thread konkurriert mit User-Enrichment um TMDB Rate-Limit.
 
 # Datei in temporären Pfad schreiben
 tmp_path = '/tmp/ratings_upload.csv'
@@ -258,15 +252,6 @@ david_df, robert_df = load_david_robert(script_dir)
 _is_lb   = 'lb_rating' in df_raw.columns
 _no_imdb = 'imdb_rating' not in df.columns or df['imdb_rating'].isna().all()
 
-# Debug-Ausgabe: zeige was detect_and_load zurückgab
-if _is_lb and api_key:
-    _dcols = [c for c in ['title', 'year', 'tmdb_rating', 'genres', 'directors'] if c in df_raw.columns]
-    with st.expander(f'🔧 Debug: Enrichment-Ergebnis (erste 5 Filme)', expanded=_no_imdb):
-        if '_enrich_error' in df_raw.columns:
-            st.error(f'Enrichment-Fehler: {df_raw["_enrich_error"].iloc[0]}')
-        st.dataframe(df_raw[_dcols].head(), use_container_width=True)
-        st.caption(f'tmdb_rating nicht-null: {df_raw["tmdb_rating"].notna().sum() if "tmdb_rating" in df_raw.columns else "Spalte fehlt"} / {len(df_raw)}')
-        st.caption(f'cache_path: {cache_path}')
 
 if _is_lb and _no_imdb:
     if not api_key:
@@ -615,10 +600,25 @@ if _has_imdb_dev or _has_david or _has_robert:
 else:
     st.info('Keine IMDB-Daten verfügbar für Abweichungsanalyse — TMDB-Key eingeben oder IMDB-Export hochladen.')
 
+# ── Debug (versteckt, nur bei Bedarf aufklappen) ─────────────────
+if _is_lb and api_key:
+    with st.expander('🔧 Debug', expanded=False):
+        if '_enrich_error' in df_raw.columns:
+            st.error(f'Enrichment-Fehler: {df_raw["_enrich_error"].iloc[0]}')
+        _dcols = [c for c in ['title', 'year', 'tmdb_rating', 'genres', 'directors'] if c in df_raw.columns]
+        _n_found = df_raw['tmdb_rating'].notna().sum() if 'tmdb_rating' in df_raw.columns else 0
+        st.caption(f'TMDB: {_n_found}/{len(df_raw)} Filme gefunden · cache_path: {cache_path}')
+        if 'tmdb_rating' in df_raw.columns:
+            _missing = df_raw[df_raw['tmdb_rating'].isna()][['title', 'year']].copy()
+            if not _missing.empty:
+                st.markdown(f'**Nicht gefunden auf TMDB ({len(_missing)}):**')
+                st.dataframe(_missing.reset_index(drop=True), use_container_width=True, hide_index=True)
+        st.dataframe(df_raw[_dcols].head(), use_container_width=True, hide_index=True)
+
 # ── Footer ────────────────────────────────────────────────────────
 st.divider()
 st.caption(
-    '🎙️ [Zwei wie Pech & Schwafel](https://www.imdb.com/title/tt...) • '
+    '🎙️ [Zwei wie Pech & Schwafel](https://open.spotify.com/show/22pGOX5N9KjeJajq1aH7Nt) • '
     'Daten: Letterboxd + IMDB + TMDB • '
     'Ratings werden nicht gespeichert.'
 )
