@@ -99,7 +99,10 @@ def _search_movie(title, year, api_key, session):
         r = session.get(f'{TMDB_BASE}/search/movie', params=params, timeout=10)
         r.raise_for_status()
         results = r.json().get('results', [])
-    except Exception:
+    except Exception as _e:
+        print(f'  TMDB search FEHLER [{title}]: {type(_e).__name__}: {_e}')
+        if hasattr(_e, 'response') and _e.response is not None:
+            print(f'  HTTP {_e.response.status_code}: {_e.response.text[:200]}')
         return None
 
     if not results:
@@ -108,7 +111,8 @@ def _search_movie(title, year, api_key, session):
         try:
             r = session.get(f'{TMDB_BASE}/search/movie', params=params, timeout=10)
             results = r.json().get('results', [])
-        except Exception:
+        except Exception as _e2:
+            print(f'  TMDB retry FEHLER [{title}]: {_e2}')
             return None
 
     if not results:
@@ -188,6 +192,7 @@ def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None):
 
     new_entries = 0
     total = len(df)
+    print(f'  enrich_letterboxd: {total} Filme, api_key={api_key[:8]}..., cache_path={cache_path}')
 
     for i, (idx, row) in enumerate(df.iterrows()):
         key = _cache_key(row.get('title', ''), row.get('year', 0))
