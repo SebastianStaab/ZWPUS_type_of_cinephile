@@ -155,7 +155,11 @@ if not uploaded:
     st.stop()
 
 # ── Daten laden ───────────────────────────────────────────────────
-api_key    = st.session_state.get('tmdb_key', '')
+# Secrets haben Priorität — Session-State nur als Fallback für manuelle Eingabe
+try:
+    api_key = st.secrets['TMDB_API_KEY'] or ''
+except Exception:
+    api_key = st.session_state.get('tmdb_key', '')
 cache_path = os.path.join(os.path.dirname(__file__), 'tmdb_cache.json')
 _script_dir_early = os.path.dirname(os.path.abspath(__file__))
 _start_cache_warming(api_key, _script_dir_early, cache_path)

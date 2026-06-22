@@ -1,0 +1,14 @@
+# Secrets — niemals committen!
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporäre Dateien
+*.tmp
+/tmp/
+
+# Cache (lokal, wird on-the-fly neu aufgebaut)
+tmdb_cache.json
