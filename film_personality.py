@@ -466,12 +466,12 @@ def compute_dimensions(df):
             bb_adj  = float((bb['user_rating']  - bb['imdb_rating']).mean())  - overall_bias_d5
             art_adj = float((art['user_rating'] - art['imdb_rating']).mean()) - overall_bias_d5
             score   = round(bb_adj - art_adj, 3)   # positiv = mag Blockbuster relativ mehr
-            if score > 0.4:
+            if score > 0.3:
                 pole = 'Blockbuster-Fan'
                 desc = (f'Du bewertest große Kassenschlager (>{BLOCKBUSTER_VOTES//1000}k Votes) '
                         f'relativ {score:.2f} Punkte besser als Arthouse-Filme '
                         f'(n_bb={len(bb)}, n_art={len(art)}).')
-            elif score < -0.4:
+            elif score < -0.3:
                 pole = 'Arthouse-Aficionado'
                 desc = (f'Du bewertest Nischenfilme (<{ARTHOUSE_VOTES//1000}k Votes) '
                         f'relativ {abs(score):.2f} Punkte besser als Blockbuster '
@@ -987,8 +987,9 @@ def save_single_dimension_chart(key, df, dims, out_path):
         _style(f'Bewertungsstil — {pole}', 'Rating (1–10)', 'Filme')
 
     elif key == 'meinungsstaerke':
-        diff = (df['user_rating'] - df['imdb_rating']).dropna()
-        if len(diff) > 0:
+        _has_imdb_chart = 'imdb_rating' in df.columns and df['imdb_rating'].notna().sum() >= 5
+        if _has_imdb_chart:
+            diff = (df['user_rating'] - df['imdb_rating']).dropna()
             bins = [x - 0.5 for x in range(-9, 11)]
             ax.hist(diff, bins=bins, color=COLOR, alpha=0.85, edgecolor=BG, zorder=3)
             ax.axvline(0, color='white', lw=1.2, ls='--', alpha=0.55, zorder=4)
@@ -998,7 +999,18 @@ def save_single_dimension_chart(key, df, dims, out_path):
             _mse_val = float((diff ** 2).mean())
             ax.text(0.97, 0.93, f'MSE={_mse_val:.2f}', transform=ax.transAxes,
                     color='#aaaaaa', fontsize=8, ha='right', va='top')
-        _style(f'Meinungsstärke — {pole}', 'Eigene − IMDB', 'Filme')
+            _style(f'Meinungsstärke — {pole}', 'Eigene − IMDB', 'Filme')
+        else:
+            # Fallback ohne IMDB: Verteilung eigener Ratings
+            counts = [(df['user_rating'] == i).sum() for i in range(1, 11)]
+            ax.bar(range(1, 11), counts, color=COLOR, alpha=0.85, width=0.72, zorder=3)
+            mean_r = df['user_rating'].mean()
+            _mse_own = float(((df['user_rating'] - mean_r) ** 2).mean())
+            ax.axvline(mean_r, color='white', lw=1.5, ls='--', alpha=0.85, zorder=5)
+            ax.text(0.97, 0.93, f'MSE={_mse_own:.2f}', transform=ax.transAxes,
+                    color='#aaaaaa', fontsize=8, ha='right', va='top')
+            ax.set_xticks(range(1, 11))
+            _style(f'Meinungsstärke — {pole}  (kein IMDB-Vergleich)', 'Rating (1–10)', 'Filme')
 
     elif key == 'geschmacksbreite':
         gdf = explode_genres(df)

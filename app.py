@@ -192,6 +192,18 @@ with st.spinner('Lade Ratings...'):
 script_dir = os.path.dirname(os.path.abspath(__file__))
 david_df, robert_df = load_david_robert(script_dir)
 
+# Warnung für Letterboxd ohne API-Key
+_is_lb = 'lb_rating' in df_raw.columns or ('imdb_rating' not in df_raw.columns and 'Const' not in df_raw.columns)
+_no_imdb = df['imdb_rating'].isna().all() if 'imdb_rating' in df.columns else True
+if _is_lb and _no_imdb and not api_key:
+    st.warning(
+        '⚠️ **Kein TMDB-API-Key gesetzt** — Genres, Regisseure und IMDB-Vergleiche fehlen. '
+        'Dadurch fehlen: Geschmacksbreite, Publikumsgeschmack, Genre-Achievements, Regisseur-Analyse und Abweichungsvergleiche. '
+        'API-Key in der Sidebar eingeben (kostenlos auf [themoviedb.org](https://www.themoviedb.org/settings/api)) '
+        'und CSV erneut hochladen.',
+        icon='🔑'
+    )
+
 
 # ── Profil berechnen ──────────────────────────────────────────────
 with st.spinner('Berechne Profil...'):
@@ -245,33 +257,59 @@ with col_right:
         sig_text = '(signifikant ✓)' if fs['significant'] else '(nicht signifikant)'
         method_note = 'IMDB-bereinigt' if fs.get('has_imdb') else 'Rohrating'
         st.markdown(f"**🎞️ Prägende Jahre {fs['form_start']}–{fs['form_end']}** _{method_note}_")
-        st.caption(
-            f"Positive Zahl = du bewertest Filme aus deinen prägenden Jahren **besser** als den Rest. "
-            f"Bias wird relativ zum IMDB-Schnitt gemessen, um Ären-Unterschiede herauszurechnen."
-        )
-        mc1, mc2, mc3, mc4 = st.columns(4)
-        mc1.metric(
-            'Bias (IMDB-rel.)' if fs.get('has_imdb') else 'Bias (roh)',
-            f"{fs['bias']:+.2f}",
-            help='Positiv = Nostalgiker. IMDB-bereinigt = Ären-Unterschiede herausgerechnet.',
-        )
-        if fs.get('has_imdb') and fs.get('bias_raw') is not None:
-            mc2.metric(
-                'Bias (roh)', f"{fs['bias_raw']:+.2f}",
-                help='Wie viel besser du Filme aus deinen prägenden Jahren bewertest — ohne IMDB-Korrektur.',
+        if fs.get('has_imdb'):
+            st.caption(
+                f"Bewertest du Filme aus deinen prägenden Jahren ({fs['form_start']}–{fs['form_end']}) "
+                f"besser als den Rest? **Bias (roh)** = direkter Vergleich deiner Noten. "
+                f"**Bias (IMDB-bereinigt)** = bereinigt um Qualitätsunterschiede zwischen Ären — "
+                f"ältere Filme haben auf IMDB oft höhere Schnitte, das wird rausgerechnet. "
+                f"**Cohen's d** und **p-Wert** beziehen sich auf den IMDB-bereinigten Wert."
             )
         else:
-            mc2.metric('Prägende Filme', fs['n_form'])
+            st.caption(
+                f"Bewertest du Filme aus deinen prägenden Jahren ({fs['form_start']}–{fs['form_end']}) "
+                f"besser als den Rest? Positiver Wert = Nostalgiker-Tendenz. "
+                f"Ohne IMDB-Daten kein Qualitätsabgleich möglich."
+            )
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        # Reihenfolge: roh zuerst (intuitiver), dann bereinigt, dann Statistik
+        if fs.get('has_imdb') and fs.get('bias_raw') is not None:
+            mc1.metric(
+                'Bias (roh)', f"{fs['bias_raw']:+.2f}",
+                help='Deine direkte Durchschnittsnote für Formativfilme minus den Rest. Intuitiv, aber von der Filmqualität beeinflusst.',
+            )
+            mc2.metric(
+                'Bias (IMDB-bereinigt)', f"{fs['bias']:+.2f}",
+                help='Gleiche Rechnung, aber jeder Film um seine IMDB-Note korrigiert. Heraus kommt: liebst du diese Filme *über* das, was ihre Qualität erwarten würde?',
+            )
+        else:
+            mc1.metric(
+                'Bias', f"{fs['bias']:+.2f}",
+                help='Positiv = du bewertest Formativfilme besser als den Rest.',
+            )
+            mc2.metric('Formativfilme', fs['n_form'])
         mc3.metric(
             "Cohen's d", f"{fs['cohens_d']:+.2f}",
-            help='Effektgröße: |d|<0.5 = klein, 0.5–0.8 = mittel, >0.8 = groß. Aussagekräftiger als p-Wert bei kleinen Stichproben.',
+            help=(
+                'Effektgröße — wie stark ist der Unterschied wirklich? '
+                '|d| < 0.5 = kleiner Effekt, 0.5–0.8 = mittlerer Effekt, > 0.8 = großer Effekt. '
+                'Wichtiger als der p-Wert wenn nur wenige Formativfilme vorhanden sind.'
+            ),
         )
-        mc4.metric('p-Wert', f"{fs['p_value']:.3f}")
+        mc4.metric(
+            'p-Wert', f"{fs['p_value']:.3f}",
+            help=(
+                'Statistische Signifikanz des IMDB-bereinigten Bias. '
+                'p < 0.05 = Effekt ist mit >95% Wahrscheinlichkeit kein Zufall. '
+                'Bei wenigen Formativfilmen (<50) ist p oft > 0.05, auch wenn ein echter Effekt vorliegt — '
+                'dann zählt Cohen\'s d mehr.'
+            ),
+        )
         _effect_color = 'green' if abs(fs['cohens_d']) >= 0.5 else 'gray'
         _d_label = fs.get('effect_label', '')
         st.caption(
             f"n={fs['n_form']} Formativfilme | Ø formativ: {fs['form_avg']:.2f} | Ø Rest: {fs['nonform_avg']:.2f} | "
-            f"t={fs['t_stat']:.2f} | :{_effect_color}[Effekt {_d_label}] | "
+            f":{_effect_color}[Effekt {_d_label}] | "
             f":{'green' if fs['significant'] else 'gray'}[{sig_text}]"
         )
         if birth_year:
@@ -403,12 +441,25 @@ if _has_imdb_dev or _has_david or _has_robert:
         bottom = merged.nsmallest(n, 'diff')[['Titel', 'Jahr', 'Eigene', label, 'Diff']]
         return top, bottom
 
-    def _style_diff(df_s):
+    def _clean_dev_df(df_s):
+        """Jahr als int, Ratings auf 1 Nachkommastelle."""
+        df_s = df_s.copy()
+        if 'Jahr' in df_s.columns:
+            df_s['Jahr'] = pd.to_numeric(df_s['Jahr'], errors='coerce').astype('Int64')
+        for col in ['Eigene', 'IMDB', 'David', 'Robert', 'Diff']:
+            if col in df_s.columns:
+                df_s[col] = pd.to_numeric(df_s[col], errors='coerce')
+        return df_s
+
+    def _style_diff(df_s, other_col=None):
+        fmt = {'Eigene': '{:.1f}', 'Diff': '{:+.1f}'}
+        if other_col and other_col in df_s.columns:
+            fmt[other_col] = '{:.1f}'
         return df_s.style.map(
-            lambda v: 'color: #4caf50; font-weight: bold' if isinstance(v, float) and v > 0
-                 else ('color: #f44336; font-weight: bold' if isinstance(v, float) and v < 0 else ''),
+            lambda v: 'color: #4caf50; font-weight: bold' if isinstance(v, (int, float)) and v > 0
+                 else ('color: #f44336; font-weight: bold' if isinstance(v, (int, float)) and v < 0 else ''),
             subset=['Diff']
-        ).format({'Eigene': '{:.1f}', 'Diff': '{:+.1f}'}, na_rep='—')
+        ).format(fmt, na_rep='—')
 
     _tab_idx = 0
 
@@ -428,12 +479,12 @@ if _has_imdb_dev or _has_david or _has_robert:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown('**⬆️ Du liebst, was andere nicht mögen**')
-                st.dataframe(_style_diff(_top_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]).format(
-                    {'IMDB': '{:.1f}'}), use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_top_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]), 'IMDB'),
+                             use_container_width=True, hide_index=True)
             with c2:
                 st.markdown('**⬇️ Du magst nicht, was andere feiern**')
-                st.dataframe(_style_diff(_bottom_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]).format(
-                    {'IMDB': '{:.1f}'}), use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_bottom_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]), 'IMDB'),
+                             use_container_width=True, hide_index=True)
 
     def _vs_person(person_df, person_col, tab):
         """Abweichungen vs. David oder Robert (join über title_norm, Ratings auf 1–10)."""
@@ -465,12 +516,12 @@ if _has_imdb_dev or _has_david or _has_robert:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f'**⬆️ Du magst deutlich mehr als {person_col}**')
-                st.dataframe(_style_diff(_top[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]).format(
-                    {person_col: '{:.1f}'}), use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_top[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]), person_col),
+                             use_container_width=True, hide_index=True)
             with c2:
                 st.markdown(f'**⬇️ Du magst deutlich weniger als {person_col}**')
-                st.dataframe(_style_diff(_bottom[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]).format(
-                    {person_col: '{:.1f}'}), use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_bottom[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]), person_col),
+                             use_container_width=True, hide_index=True)
 
     if _has_david:
         _vs_person(david_df, 'David', _dev_tabs[_tab_idx])
