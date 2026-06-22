@@ -117,14 +117,7 @@ with st.sidebar:
     # Cache-Status — Placeholder, wird auch während Enrichment aktualisiert
     _cache_status = st.empty()
 
-    st.markdown(
-        '**Letterboxd-Export:**\n'
-        'letterboxd.com → Profil → Einstellungen → **Daten** → Export Your Data\n'
-        '→ ZIP öffnen → `ratings.csv` hochladen\n\n'
-        '**IMDB-Export:**\n'
-        'imdb.com → Profil → Your ratings → `...` → Export\n'
-        '→ CSV direkt hochladen (sofort, kein TMDB nötig)'
-    )
+    pass  # Export-Anleitung ist im Hauptbereich unter "Wie funktioniert das?"
 
 def _update_cache_status(done=None, total=None):
     """Zeigt Enrichment-Fortschritt oder Cache-Größe im Sidebar."""
@@ -162,10 +155,13 @@ if not uploaded:
     st.info('⬆️ Lade deine Ratings-CSV hoch um loszulegen.')
     with st.expander('Wie funktioniert das?'):
         st.markdown(
-            '1. **Letterboxd-Export**: letterboxd.com → Profil → Einstellungen → Daten → "Export Your Data"\n'
-            '2. **IMDB-Export**: imdb.com → Deine Ratings → ... → CSV exportieren\n'
-            '3. CSV hier hochladen, Namen eingeben, fertig!\n\n'
-            'Mit einem TMDB-API-Key (kostenlos) werden Genres und Regisseure automatisch ergänzt.'
+            '### Letterboxd-Export\n'
+            '1. letterboxd.com → Profil → **Einstellungen** → **Daten** → "Export Your Data"\n'
+            '2. ZIP öffnen → `ratings.csv` hochladen\n'
+            '3. Für volle Analyse (Genres, Regisseure, IMDB-Vergleich): TMDB-API-Key in der Sidebar eintragen (kostenlos auf themoviedb.org)\n\n'
+            '### IMDB-Export\n'
+            '1. imdb.com → Profil-Icon → **Your ratings** → `...` → **Export**\n'
+            '2. CSV direkt hochladen — kein API-Key nötig, Genres und Regisseure sind bereits enthalten\n'
         )
     st.stop()
 
@@ -217,10 +213,24 @@ except Exception:
 if _is_lb_quick and api_key:
     try:
         import requests as _req
+        # Test 1: Pulp Fiction (Referenzfilm)
         _tr = _req.get('https://api.themoviedb.org/3/search/movie',
                        params={'api_key': api_key.strip(), 'query': 'Pulp Fiction'},
                        timeout=8)
         st.caption(f'🔍 TMDB API-Test: HTTP {_tr.status_code} — {len(_tr.json().get("results", []))} Treffer für "Pulp Fiction"')
+        # Test 2: Erster Film aus dem LB-Export (echter Test)
+        try:
+            _lbdf_test = pd.read_csv(tmp_path, nrows=2)
+            _t1 = str(_lbdf_test['Name'].iloc[0]) if 'Name' in _lbdf_test.columns else '?'
+            _y1 = _lbdf_test['Year'].iloc[0] if 'Year' in _lbdf_test.columns else None
+            _params1 = {'api_key': api_key.strip(), 'query': _t1}
+            if _y1 and str(_y1) not in ('nan', '0'):
+                _params1['year'] = int(_y1)
+            _tr2 = _req.get('https://api.themoviedb.org/3/search/movie', params=_params1, timeout=8)
+            _r2  = _tr2.json()
+            st.caption(f'🔍 Test erster LB-Film "{_t1}" ({_y1}): HTTP {_tr2.status_code} — {len(_r2.get("results", []))} Treffer | api_key[:4]={api_key[:4]}')
+        except Exception as _te2:
+            st.caption(f'🔍 LB-Film-Test FEHLER: {_te2}')
     except Exception as _te:
         st.warning(f'🔍 TMDB API-Test FEHLER: {_te}')
 elif _is_lb_quick and not api_key:
@@ -244,6 +254,15 @@ david_df, robert_df = load_david_robert(script_dir)
 # Warnung für Letterboxd-Exporte ohne IMDB-Daten
 _is_lb   = 'lb_rating' in df_raw.columns
 _no_imdb = 'imdb_rating' not in df.columns or df['imdb_rating'].isna().all()
+
+# Debug-Ausgabe: zeige was detect_and_load zurückgab
+if _is_lb and api_key:
+    _dcols = [c for c in ['title', 'year', 'tmdb_rating', 'genres', 'directors'] if c in df_raw.columns]
+    with st.expander(f'🔧 Debug: Enrichment-Ergebnis (erste 5 Filme)', expanded=_no_imdb):
+        st.dataframe(df_raw[_dcols].head(), use_container_width=True)
+        st.caption(f'tmdb_rating nicht-null: {df_raw["tmdb_rating"].notna().sum() if "tmdb_rating" in df_raw.columns else "Spalte fehlt"} / {len(df_raw)}')
+        st.caption(f'cache_path: {cache_path}')
+
 if _is_lb and _no_imdb:
     if not api_key:
         st.warning(
