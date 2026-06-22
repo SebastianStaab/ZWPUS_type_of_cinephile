@@ -201,6 +201,15 @@ def load_imdb_export(path):
     n_series = len(raw[raw['title_type'].isin(series_types)]) if 'title_type' in raw.columns else 0
     print(f"  Geladen: {n_films} Filme  |  {n_series} Serien  |  {len(raw)} Einträge gesamt")
     print(f"  (Filme mit Genres: {df_films['genres'].notna().sum()})")
+
+    # IMDB-Daten in TMDB-Cache schreiben (hilft LB-Usern mit gleichen Filmen)
+    if cache_path:
+        try:
+            from tmdb_enrich import populate_cache_from_imdb
+            populate_cache_from_imdb(df_films, cache_path)
+        except Exception:
+            pass
+
     return df_films, raw
 
 
@@ -300,7 +309,7 @@ def detect_and_load(path, api_key=None, cache_path=None, progress_cb=None):
 
     if imdb_cols & cols:
         print('  Format erkannt: IMDB-Export')
-        return load_imdb_export(path)
+        return load_imdb_export(path, cache_path=cache_path)
     elif lb_cols & cols or 'Name' in cols:
         print('  Format erkannt: Letterboxd-Export')
         return load_letterboxd_export(path, api_key=api_key, cache_path=cache_path, progress_cb=progress_cb)

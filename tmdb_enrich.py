@@ -57,6 +57,44 @@ TMDB_BASE   = 'https://api.themoviedb.org/3'
 CACHE_FILE  = 'tmdb_cache.json'
 DELAY       = 0.25   # seconds between API requests (polite)
 
+# ── IMDB-Genre (EN) → Deutsch ─────────────────────────────────────
+IMDB_GENRE_DE = {
+    'Action':      'Action',
+    'Adventure':   'Abenteuer',
+    'Animation':   'Animation',
+    'Biography':   'Biografie',
+    'Comedy':      'Komödie',
+    'Crime':       'Krimi',
+    'Documentary': 'Dokumentarfilm',
+    'Drama':       'Drama',
+    'Family':      'Familienfilm',
+    'Fantasy':     'Fantasy',
+    'History':     'Geschichte',
+    'Horror':      'Horror',
+    'Music':       'Musikfilm',
+    'Musical':     'Musical',
+    'Mystery':     'Mystery',
+    'Romance':     'Liebesfilm',
+    'Sci-Fi':      'Science-Fiction',
+    'Sport':       'Sportfilm',
+    'Thriller':    'Thriller',
+    'War':         'Kriegsfilm',
+    'Western':     'Western',
+    # Deutsche IMDB-Namen (für User mit DE-IMDB)
+    'Abenteuer':   'Abenteuer',
+    'Biografie':   'Biografie',
+    'Komödie':     'Komödie',
+    'Krimi':       'Krimi',
+    'Dokumentarfilm': 'Dokumentarfilm',
+    'Familienfilm': 'Familienfilm',
+    'Geschichte':  'Geschichte',
+    'Kriegsfilm':  'Kriegsfilm',
+    'Liebesfilm':  'Liebesfilm',
+    'Musikfilm':   'Musikfilm',
+    'Science-Fiction': 'Science-Fiction',
+    'Sportfilm':   'Sportfilm',
+}
+
 
 # ── Hilfsfunktionen ───────────────────────────────────────────────
 
@@ -85,6 +123,56 @@ def save_cache(cache, path=CACHE_FILE):
             json.dump(cache, f, ensure_ascii=False, indent=2)
     except Exception:
         pass  # Read-only filesystem (z.B. Streamlit Cloud) — kein Cache-Schreiben, aber Daten im RAM
+
+
+def populate_cache_from_imdb(df, cache_path=CACHE_FILE):
+    """
+    Befüllt den TMDB-Cache mit Daten aus einem IMDB-Export.
+    Spart TMDB-API-Calls für LB-User die die gleichen Filme haben.
+
+    df braucht: title, year, imdb_rating, num_votes, genres, directors
+    """
+    cache = load_cache(cache_path)
+    added = 0
+
+    for _, row in df.iterrows():
+        title = row.get('title', '')
+        year  = row.get('year')
+        if not title or pd.isna(title):
+            continue
+
+        key = _cache_key(title, year)
+        if key in cache and cache[key]:  # nur wenn noch nicht gecacht
+            continue
+
+        # Genres: IMDB-EN → Deutsch
+        genres_raw = row.get('genres', '')
+        genres_de  = []
+        if isinstance(genres_raw, str):
+            for g in [x.strip() for x in genres_raw.split(',')]:
+                genres_de.append(IMDB_GENRE_DE.get(g, g))
+
+        # Directors
+        dirs_raw = row.get('directors', '')
+        dirs = dirs_raw if isinstance(dirs_raw, str) else ''
+
+        imdb_r   = row.get('imdb_rating')
+        num_v    = row.get('num_votes')
+
+        cache[key] = {
+            'tmdb_id':     None,  # IMDB-Const ≠ TMDB-ID
+            'tmdb_rating': round(float(imdb_r), 2) if pd.notna(imdb_r) else None,
+            'vote_count':  int(num_v) if pd.notna(num_v) else None,
+            'genres':      ', '.join(sorted(set(genres_de))) if genres_de else None,
+            'directors':   dirs if dirs else None,
+        }
+        added += 1
+
+    if added > 0:
+        save_cache(cache, cache_path)
+        print(f'  Cache: {added} Filme aus IMDB-Export hinzugefügt (gesamt: {len(cache)})')
+
+    return added
 
 
 # ── TMDB API ──────────────────────────────────────────────────────

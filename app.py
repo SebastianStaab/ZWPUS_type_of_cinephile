@@ -206,6 +206,26 @@ def _tmdb_progress(done, total):
         _prog_text.empty()
         _update_cache_status()  # finale Cache-Größe
 
+# ── TMDB API Quick-Test ──────────────────────────────────────────
+_is_lb_quick = False
+try:
+    _quick_cols = pd.read_csv(tmp_path, nrows=0).columns.tolist()
+    _is_lb_quick = 'Name' in _quick_cols and 'Letterboxd URI' in _quick_cols
+except Exception:
+    pass
+
+if _is_lb_quick and api_key:
+    try:
+        import requests as _req
+        _tr = _req.get('https://api.themoviedb.org/3/search/movie',
+                       params={'api_key': api_key.strip(), 'query': 'Pulp Fiction'},
+                       timeout=8)
+        st.caption(f'🔍 TMDB API-Test: HTTP {_tr.status_code} — {len(_tr.json().get("results", []))} Treffer für "Pulp Fiction"')
+    except Exception as _te:
+        st.warning(f'🔍 TMDB API-Test FEHLER: {_te}')
+elif _is_lb_quick and not api_key:
+    st.caption('🔍 TMDB API-Test: kein api_key')
+
 with st.spinner('Lade Ratings...'):
     try:
         df, df_raw = detect_and_load(
