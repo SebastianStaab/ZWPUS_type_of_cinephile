@@ -49,9 +49,10 @@ MAINSTREAMER_CORR     = 0.60
 REBELL_CORR           = 0.00
 BLOCKBUSTER_VOTES     = 500_000  # Min. Votes → als Blockbuster (IMDB-Daten)
 ARTHOUSE_VOTES        = 50_000   # Max. Votes → als Arthouse   (IMDB-Daten)
-BLOCKBUSTER_VOTES_TMDB = 50_000  # Min. Votes für TMDB-Daten (~10x weniger als IMDB)
-ARTHOUSE_VOTES_TMDB    = 5_000   # Max. Votes für TMDB-Daten
-BLOCKBUSTER_MIN_FILMS = 10
+BLOCKBUSTER_VOTES_TMDB = 10_000  # Min. Votes für TMDB-Daten (Avengers ~30K, normale Blockbuster ~5-15K)
+ARTHOUSE_VOTES_TMDB    = 500     # Max. Votes für TMDB-Daten (echte Arthouse-Filme)
+BLOCKBUSTER_MIN_FILMS  = 10
+BLOCKBUSTER_MIN_FILMS_TMDB = 5   # Weniger Filme qualifizieren sich bei TMDB-Schwellen
 ARTHOUSE_MIN_FILMS    = 5
 BLOCKBUSTER_DIFF      = 0.5      # user_avg_blockbuster - gesamt_avg > X
 ARTHOUSE_DIFF         = 0.5
@@ -416,56 +417,58 @@ def load_david_robert(script_dir):
 # 1. PERSÖNLICHKEITSDIMENSIONEN
 # ─────────────────────────────────────────────────────────────────
 
-def compute_dimensions(df):
+def compute_dimensions(df, rating_source='IMDB'):
     """
     Berechnet 4 Persönlichkeitsdimensionen (Myers-Briggs-Stil).
     Jede hat zwei Extreme und eine Mitte.
     Gibt Dict zurück: {dimension: {pole, score, desc}}
+
+    rating_source: 'IMDB' oder 'TMDB' — steuert Label in Beschreibungen
     """
     dims = {}
+    RS = rating_source  # kurz für f-strings
 
     # ── D1: Streng ↔ Mild ────────────────────────────────────────
-    # Ø(eigene Bewertung - IMDB-Schnitt) — negativ = strenger als Massen
+    # Ø(eigene Bewertung - crowd-Schnitt) — negativ = strenger als Massen
     diff = (df['user_rating'] - df['imdb_rating']).mean()
     if diff < DIM_STRENG_THRESHOLD:
         pole = 'Streng'
-        desc = f'Du bewertest im Schnitt {abs(diff):.1f} Punkte unter IMDB. Anspruchsvoll.'
+        desc = f'Du bewertest im Schnitt {abs(diff):.1f} Punkte unter {RS}. Anspruchsvoll.'
     elif diff > DIM_MILD_THRESHOLD:
         pole = 'Mild'
-        desc = f'Du bewertest im Schnitt {diff:.1f} Punkte über IMDB. Großzügig.'
+        desc = f'Du bewertest im Schnitt {diff:.1f} Punkte über {RS}. Großzügig.'
     else:
         pole = 'Ausgewogen'
-        desc = f'Deine Ratings liegen nah am IMDB-Schnitt (Δ={diff:+.2f}).'
+        desc = f'Deine Ratings liegen nah am {RS}-Schnitt (Δ={diff:+.2f}).'
     dims['bewertungsstil'] = {'pole': pole, 'score': round(diff, 3), 'desc': desc,
                                'label': 'Bewertungsstil', 'emoji': '🎯'}
 
     # ── D2: Diplomat ↔ Polarisierer ──────────────────────────────
-    # σ(user−IMDB): misst Inkonsistenz der eigenen Abweichungen vom Konsens —
+    # σ(user−crowd): misst Inkonsistenz der eigenen Abweichungen vom Konsens —
     # nicht ob man generell streng/mild ist (das ist D1), sondern ob man bei
     # manchen Filmen stark abweicht und bei anderen gar nicht.
-    # Fallback auf σ(own ratings) wenn keine IMDB-Daten.
-    # MSE(user−IMDB): große Abweichungen werden quadratisch stärker gewichtet.
-    # Fallback auf MSE(own ratings − mean) wenn keine IMDB-Daten.
+    # Fallback auf σ(own ratings) wenn keine Crowd-Daten.
+    # MSE(user−crowd): große Abweichungen werden quadratisch stärker gewichtet.
     has_imdb_d2 = 'imdb_rating' in df.columns and df['imdb_rating'].notna().sum() >= 10
     if has_imdb_d2:
         _diff_d2 = (df['user_rating'] - df['imdb_rating']).dropna()
         mse = float((_diff_d2 ** 2).mean())
-        _mse_label = 'MSE(user−IMDB)'
+        _mse_label = f'MSE(user−{RS})'
     else:
         _mean_r = df['user_rating'].mean()
         mse = float(((df['user_rating'] - _mean_r) ** 2).mean())
         _mse_label = 'MSE'
     if mse > DIM_POLAR_THRESHOLD:
         pole = 'Polarisierer'
-        desc = (f'Deine Abweichungen von IMDB sind sehr inkonsistent — bei manchen Filmen '
+        desc = (f'Deine Abweichungen von {RS} sind sehr inkonsistent — bei manchen Filmen '
                 f'liebst du, was andere hassen, und umgekehrt ({_mse_label}={mse:.2f}).')
     elif mse < DIM_DIPLO_THRESHOLD:
         pole = 'Diplomat'
-        desc = (f'Du bewertest Filme sehr ähnlich wie der IMDB-Konsens — '
+        desc = (f'Du bewertest Filme sehr ähnlich wie der {RS}-Konsens — '
                 f'kein starkes Außenseiterprofil ({_mse_label}={mse:.2f}).')
     else:
         pole = 'Ausgewogen'
-        desc = f'Weder durchgehend Abweichler noch IMDB-Klon ({_mse_label}={mse:.2f}).'
+        desc = f'Weder durchgehend Abweichler noch {RS}-Klon ({_mse_label}={mse:.2f}).'
     dims['meinungsstaerke'] = {'pole': pole, 'score': round(mse, 3), 'desc': desc,
                                 'label': 'Meinungsstärke', 'emoji': '💥'}
 
@@ -511,13 +514,14 @@ def compute_dimensions(df):
         # Automatische Erkennung: TMDB-Vote-Counts sind ~10x kleiner als IMDB
         _median_votes = df['num_votes'].dropna().median()
         _is_tmdb = _median_votes < 100_000
-        _bb_thresh  = BLOCKBUSTER_VOTES_TMDB if _is_tmdb else BLOCKBUSTER_VOTES
-        _art_thresh = ARTHOUSE_VOTES_TMDB    if _is_tmdb else ARTHOUSE_VOTES
+        _bb_thresh  = BLOCKBUSTER_VOTES_TMDB    if _is_tmdb else BLOCKBUSTER_VOTES
+        _art_thresh = ARTHOUSE_VOTES_TMDB       if _is_tmdb else ARTHOUSE_VOTES
+        _bb_min     = BLOCKBUSTER_MIN_FILMS_TMDB if _is_tmdb else BLOCKBUSTER_MIN_FILMS
 
         overall_bias_d5 = float((df['user_rating'] - df['imdb_rating']).mean())
         bb  = df[(df['num_votes'] >= _bb_thresh)  & df['imdb_rating'].notna()]
         art = df[(df['num_votes'] <= _art_thresh) & df['imdb_rating'].notna()]
-        if len(bb) >= BLOCKBUSTER_MIN_FILMS and len(art) >= ARTHOUSE_MIN_FILMS:
+        if len(bb) >= _bb_min and len(art) >= ARTHOUSE_MIN_FILMS:
             bb_adj  = float((bb['user_rating']  - bb['imdb_rating']).mean())  - overall_bias_d5
             art_adj = float((art['user_rating'] - art['imdb_rating']).mean()) - overall_bias_d5
             score   = round(bb_adj - art_adj, 3)
@@ -547,12 +551,13 @@ def compute_dimensions(df):
 # 2. BONUS-ACHIEVEMENTS
 # ─────────────────────────────────────────────────────────────────
 
-def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=None):
+def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=None, rating_source='IMDB'):
     """
     Berechnet Bonus-Achievements.
     Gibt Liste von Dicts zurück: {emoji, name, desc}
     """
     ach = []
+    RS = rating_source
     overall_avg = df['user_rating'].mean()
 
     # ── The real OG ──────────────────────────────────────────────────
@@ -572,16 +577,21 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
     if not np.isnan(corr):
         if corr > MAINSTREAMER_CORR:
             ach.append({'emoji': '📺', 'name': 'Mainstreamer',
-                        'desc': f'Deine Ratings folgen IMDB fast exakt (r={corr:.2f}). Du bist der Algorithmus — und der streamt auch.'})
+                        'desc': f'Deine Ratings folgen {RS} fast exakt (r={corr:.2f}). Du bist der Algorithmus — und der streamt auch.'})
         elif corr < REBELL_CORR:
             ach.append({'emoji': '🏴‍☠️', 'name': 'Rebell',
-                        'desc': f'Negative Korrelation mit IMDB (r={corr:.2f}). Du liebst, was alle hassen — oder hasst, was alle lieben.'})
+                        'desc': f'Negative Korrelation mit {RS} (r={corr:.2f}). Du liebst, was alle hassen — oder hasst, was alle lieben.'})
 
     # ── Blockbuster-Bro / Arthouse-Snob ──────────────────────────
     if 'num_votes' in df.columns:
-        bb_films = df[df['num_votes'] >= BLOCKBUSTER_VOTES]
-        art_films = df[df['num_votes'] <= ARTHOUSE_VOTES]
-        if len(bb_films) >= BLOCKBUSTER_MIN_FILMS:
+        _med_v = df['num_votes'].dropna().median() if df['num_votes'].notna().any() else 999_999
+        _is_tmdb_b = _med_v < 100_000
+        _bb_v   = BLOCKBUSTER_VOTES_TMDB    if _is_tmdb_b else BLOCKBUSTER_VOTES
+        _art_v  = ARTHOUSE_VOTES_TMDB       if _is_tmdb_b else ARTHOUSE_VOTES
+        _bb_min = BLOCKBUSTER_MIN_FILMS_TMDB if _is_tmdb_b else BLOCKBUSTER_MIN_FILMS
+        bb_films = df[df['num_votes'] >= _bb_v]
+        art_films = df[df['num_votes'] <= _art_v]
+        if len(bb_films) >= _bb_min:
             bb_diff = bb_films['user_rating'].mean() - overall_avg
             if bb_diff > BLOCKBUSTER_DIFF:
                 ach.append({'emoji': '🍿', 'name': 'Blockbuster-Bro',
@@ -596,7 +606,7 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
     gems = df[(df['imdb_rating'] < HIDDEN_GEM_IMDB_MAX) & (df['user_rating'] >= HIDDEN_GEM_USER_MIN)]
     if len(gems) >= HIDDEN_GEM_MIN:
         ach.append({'emoji': '💎', 'name': 'Hidden Gem Hunter',
-                    'desc': f'{len(gems)} Geheimtipps entdeckt: IMDB sagt Ø{gems["imdb_rating"].mean():.1f}, du sagst Ø{gems["user_rating"].mean():.1f}.'})
+                    'desc': f'{len(gems)} Geheimtipps entdeckt: {RS} sagt Ø{gems["imdb_rating"].mean():.1f}, du sagst Ø{gems["user_rating"].mean():.1f}.'})
 
     # ── Trash-King ────────────────────────────────────────────────
     # Mind. 5 Filme wo IMDB < 5.0 aber du gibst ≥ 8 — du liebst Trash
@@ -663,7 +673,7 @@ def compute_genre_achievements(df):
     """
     Prüft für jedes Genre positive und negative Achievements.
     Positiv: user_avg_genre - user_gesamt_avg >= GENRE_DIFF_THRESHOLD
-    Negativ (hasst): adj = (user_avg - imdb_avg) - overall_bias <= -0.5
+    Negativ (hasst): adj <= min(-GENRE_DIFF_THRESHOLD, -1.6/sqrt(n/5))  [adaptiv, Floor = pos. Threshold]
     """
     if 'genres' not in df.columns or df['genres'].notna().sum() < 10:
         return []
@@ -701,8 +711,10 @@ def compute_genre_achievements(df):
             sub_rated = sub[sub['imdb_rating'].notna()]
             n_neg = len(sub_rated)
             if n_neg >= GENRE_MIN_FILMS:
-                # n=5→-1.6, n=20→-0.8, n=80→-0.4 (Floor)
-                adaptive_hate_threshold = min(-0.4, -1.6 / math.sqrt(n_neg / 5))
+                # Adaptiver Threshold: bei kleinen n strenger (Noise-Schutz),
+                # konvergiert bei großen n zum symmetrischen -GENRE_DIFF_THRESHOLD
+                # n=5→-1.6, n=20→-0.8, n=320→-0.2 (Floor = pos. Threshold)
+                adaptive_hate_threshold = min(-GENRE_DIFF_THRESHOLD, -1.6 / math.sqrt(n_neg / 5))
                 adj = (sub_rated['user_rating'].mean() - sub_rated['imdb_rating'].mean()) - overall_bias
                 if adj <= adaptive_hate_threshold:
                     h_emoji, h_name, h_desc = GENRE_HATE_ACHIEVEMENTS[genre]

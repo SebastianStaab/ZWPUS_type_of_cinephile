@@ -269,9 +269,12 @@ if _is_lb and _no_imdb:
 
 
 # ── Profil berechnen ──────────────────────────────────────────────
+# Datenquelle bestimmen: LB-Upload → TMDB-angereichert, IMDB-Upload → IMDB-Daten
+_rating_source = 'TMDB' if 'lb_rating' in df_raw.columns else 'IMDB'
+
 with st.spinner('Berechne Profil...'):
-    dims        = compute_dimensions(df)
-    bonus       = compute_bonus_achievements(df, birth_year, david_df, robert_df)
+    dims        = compute_dimensions(df, rating_source=_rating_source)
+    bonus       = compute_bonus_achievements(df, birth_year, david_df, robert_df, rating_source=_rating_source)
     genre_ach   = compute_genre_achievements(df)
     insider     = compute_insider_achievements(df, df_raw)
     progressive = compute_progressive_achievements(df_raw)
