@@ -47,8 +47,10 @@ GENRE_MIN_FILMS      = 3     # Mind. X Filme im Genre
 # Bonus-Achievements
 MAINSTREAMER_CORR     = 0.60
 REBELL_CORR           = 0.00
-BLOCKBUSTER_VOTES     = 500_000  # Min. Votes → als Blockbuster gewertet
-ARTHOUSE_VOTES        = 50_000   # Max. Votes → als Arthouse gewertet
+BLOCKBUSTER_VOTES     = 500_000  # Min. Votes → als Blockbuster (IMDB-Daten)
+ARTHOUSE_VOTES        = 50_000   # Max. Votes → als Arthouse   (IMDB-Daten)
+BLOCKBUSTER_VOTES_TMDB = 50_000  # Min. Votes für TMDB-Daten (~10x weniger als IMDB)
+ARTHOUSE_VOTES_TMDB    = 5_000   # Max. Votes für TMDB-Daten
 BLOCKBUSTER_MIN_FILMS = 10
 ARTHOUSE_MIN_FILMS    = 5
 BLOCKBUSTER_DIFF      = 0.5      # user_avg_blockbuster - gesamt_avg > X
@@ -92,27 +94,52 @@ SERIES_MILESTONES = [
 # Format: 'IMDB-Genre': (emoji, achievement_name, kurzbeschreibung)
 # ─────────────────────────────────────────────────────────────────
 GENRE_ACHIEVEMENTS = {
-    'Action':         ('🥋', 'Karate-Tiger',         'Explosivstoffe und Fäuste — du liebst es.'),
-    'Abenteuer':      ('🤠', 'Indiana Jones',          'Auf ins Abenteuer. Hut aufsetzen nicht vergessen.'),
-    'Animation':      ('🧸', 'The superior way of telling Fantasy',            'Gezeichnet, animiert oder gerendert — für dich ist das Leinwand auf Augenhöhe mit Realfilm.'),
-    'Biografie':      ('📖', 'True Story',        '"Basiert auf wahren Begebenheiten" reicht dir als Kaufargument.'),
-    'Dokumentarfilm': ('📹', 'Doku Dealer',            'Arte läuft bei dir rund um die Uhr.'),
-    'Drama':          ('😭', 'Drama Queen',         'Du leidest gerne. Cineastisch gesehen.'),
-    'Familienfilm':   ('👨‍👩‍👧', 'Cozy up',             'Familienabend-Architekt. Popcorn ist Pflicht.'),
-    'Fantasy':        ('🧙', 'Dragons?',        'Du bist zu jedem Mittelerde-Trip bereit.'),
-    'Geschichte':     ('⚔️', 'Mittelaltermarkt',          'Die Vergangenheit war dein Multiplex.'),
-    'Horror':         ('👻', 'Teilen wir uns auf!',       'Freddys Liebling. Dunkelheit ist dein Freund.'),
-    'Komödie':        ('😂', 'Nur ne Fleischwunde',             'Du lachst, wo andere gähnen.'),
-    'Kriegsfilm':     ('🪖', 'War never changes',         'Du schaust Kriegsfilme — und findest sie gut.'),
-    'Krimi':          ('🔫', 'Good Cop or Bad Cop?',           'Ein Angebot, das du nicht ablehnen kannst.'),
-    'Liebesfilm':     ('💕', 'In the Mood for Love',      'Du glaubst an große Gefühle auf der Leinwand.'),
-    'Musikfilm':      ('🎸', 'Dancing Queen',         'Wenn Musik zur Hauptrolle wird, bist du dabei.'),
-    'Musical':        ('🎭', "Welcome to La La Land",       'Du singst innerlich mit. Sehr laut.'),
-    'Mystery':        ('🔍', 'The unreliable Narrator',        '"Nur noch eine Frage..." Du liebst Rätsel.'),
-    'Science-Fiction':('🚀', 'May the fourth be with you',              'Logisch. Und: Raumschiffe sind cool.'),
-    'Sportfilm':      ('🏆', 'Underdog',        'Underdog-Storys treffen dich jedes Mal neu.'),
-    'Thriller':       ('😬', "What's in the Box?",       'Spannung ist dein zweiter Vorname.'),
-    'Western':        ('🌵', 'High Noon',            'The Good, the Bad, and — du.'),
+    'Action':         ('🥋', 'Karate-Tiger',                    'Explosivstoffe und Fäuste — du liebst es.'),
+    'Abenteuer':      ('🤠', 'Indiana Jones',                    'Auf ins Abenteuer. Hut aufsetzen nicht vergessen.'),
+    'Animation':      ('🧸', 'The superior way of telling Fantasy', 'Gezeichnet, animiert oder gerendert — für dich ist das Leinwand auf Augenhöhe mit Realfilm.'),
+    'Biografie':      ('📖', 'True Story',                       '"Basiert auf wahren Begebenheiten" reicht dir als Kaufargument.'),
+    'Dokumentarfilm': ('📹', 'Doku Dealer',                      'Arte läuft bei dir rund um die Uhr.'),
+    'Drama':          ('😭', 'Drama Queen',                      'Du leidest gerne. Cineastisch gesehen.'),
+    'Familienfilm':   ('👨‍👩‍👧', 'Cozy up',                       'Familienabend-Architekt. Popcorn ist Pflicht.'),
+    'Fantasy':        ('🧙', 'Dragons?',                         'Du bist zu jedem Mittelerde-Trip bereit.'),
+    'Geschichte':     ('⚔️', 'Mittelaltermarkt',                 'Die Vergangenheit war dein Multiplex.'),
+    'Horror':         ('👻', 'Teilen wir uns auf!',              'Freddys Liebling. Dunkelheit ist dein Freund.'),
+    'Komödie':        ('😂', 'Nur ne Fleischwunde',              'Du lachst, wo andere gähnen.'),
+    'Kriegsfilm':     ('🪖', 'War never changes',                'Du schaust Kriegsfilme — und findest sie gut.'),
+    'Krimi':          ('🔫', 'Good Cop or Bad Cop?',             'Ein Angebot, das du nicht ablehnen kannst.'),
+    'Liebesfilm':     ('💕', 'In the Mood for Love',             'Du glaubst an große Gefühle auf der Leinwand.'),
+    'Musikfilm':      ('🎸', 'Dancing Queen',                    'Wenn Musik zur Hauptrolle wird, bist du dabei.'),
+    'Musical':        ('🎭', 'Welcome to La La Land',            'Du singst innerlich mit. Sehr laut.'),
+    'Mystery':        ('🔍', 'The unreliable Narrator',          '"Nur noch eine Frage..." Du liebst Rätsel.'),
+    'Science-Fiction':('🚀', 'May the fourth be with you',       'Logisch. Und: Raumschiffe sind cool.'),
+    'Sportfilm':      ('🏆', 'Underdog',                         'Underdog-Storys treffen dich jedes Mal neu.'),
+    'Thriller':       ('😬', "What's in the Box?",               'Spannung ist dein zweiter Vorname.'),
+    'Western':        ('🌵', 'High Noon',                        'The Good, the Bad, and — du.'),
+}
+
+# Negative Genre-Achievements (höherer Threshold als positiv — ca. doppelt)
+GENRE_HATE_ACHIEVEMENTS = {
+    'Action':         ('🕊️', 'Feuerpause',                          'Explosionen und Verfolgungsjagden? Du brauchst das nicht.'),
+    'Abenteuer':      ('🛋️', 'Zuhause ist\'s am schönsten',          'Abenteuer? Nur auf dem Sofa.'),
+    'Animation':      ('🙅', 'Nur für Kinder',                       'Animiert heißt für dich: nicht für mich.'),
+    'Biografie':      ('🤷', 'Wer war das nochmal?',                 'Lebensgeschichten lassen dich kalt.'),
+    'Dokumentarfilm': ('📺', 'Kein Arte-Abend',                      'Lehrreich ist kein Kaufargument.'),
+    'Drama':          ('🙂', 'Ohne Tränen bitte',                    'Auf emotionale Schwergewichte kannst du verzichten.'),
+    'Familienfilm':   ('🚪', 'Kein Familienabend',                   'Herzerwärmend ist nicht dein Modus.'),
+    'Fantasy':        ('🐉', 'Keine Drachen',                        'Magie, Elfen, Drachen — du lehnst das ganze Universum ab.'),
+    'Geschichte':     ('📅', 'Kein Geschichtsunterricht',            'Die Vergangenheit darf vergangen bleiben.'),
+    'Horror':         ('💡', 'Lights on',                            'Lieber wieder Mickey Maus.'),
+    'Komödie':        ('🪑', 'Zum Lachen gehst du wohl in den Keller', 'Humor auf der Leinwand zündet bei dir nicht.'),
+    'Kriegsfilm':     ('☮️', 'Pazifist',                             'Kriegsfilme sind nicht dein Schlachtfeld.'),
+    'Krimi':          ('📁', 'Fall geschlossen',                     'Krimis lösen bei dir nichts aus.'),
+    'Liebesfilm':     ('😬', 'Schauder-Schnulzen',                   'Große Gefühle auf der Leinwand? Eher Schauder.'),
+    'Musikfilm':      ('🔇', 'Nachtruhe!',                           'Wenn Musik zur Hauptrolle wird, schaltest du ab.'),
+    'Musical':        ('🙉', 'Bitte nicht singen!',                  'Wenn alle anfangen zu singen, hörst du auf zu schauen.'),
+    'Mystery':        ('🔓', 'Spoiler bitte',                        'Rätsel reizen dich nicht.'),
+    'Science-Fiction':('🚫', 'Warp-Verweigerer',                     'Raumschiffe und Zeitreisen? Nicht dein Universum.'),
+    'Sportfilm':      ('🏳️', 'Sport ist Mord',                       'Der Außenseiter-Triumph lässt dich kalt.'),
+    'Thriller':       ('💅', 'Ent-Spannung',                         'Die Fingernägel bleiben dran. Spannung ist nicht dein zweiter Vorname.'),
+    'Western':        ('🌵', 'Läster Western',                       'The Bad, the Bad, and — auch der Ugly war nix.'),
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -481,21 +508,28 @@ def compute_dimensions(df):
 
     # ── D5: Blockbuster ↔ Arthouse ────────────────────────────────────
     if 'num_votes' in df.columns and df['num_votes'].notna().sum() >= 20:
+        # Automatische Erkennung: TMDB-Vote-Counts sind ~10x kleiner als IMDB
+        _median_votes = df['num_votes'].dropna().median()
+        _is_tmdb = _median_votes < 100_000
+        _bb_thresh  = BLOCKBUSTER_VOTES_TMDB if _is_tmdb else BLOCKBUSTER_VOTES
+        _art_thresh = ARTHOUSE_VOTES_TMDB    if _is_tmdb else ARTHOUSE_VOTES
+
         overall_bias_d5 = float((df['user_rating'] - df['imdb_rating']).mean())
-        bb  = df[(df['num_votes'] >= BLOCKBUSTER_VOTES) & df['imdb_rating'].notna()]
-        art = df[(df['num_votes'] <= ARTHOUSE_VOTES)    & df['imdb_rating'].notna()]
-        if len(bb) >= 10 and len(art) >= 5:
+        bb  = df[(df['num_votes'] >= _bb_thresh)  & df['imdb_rating'].notna()]
+        art = df[(df['num_votes'] <= _art_thresh) & df['imdb_rating'].notna()]
+        if len(bb) >= BLOCKBUSTER_MIN_FILMS and len(art) >= ARTHOUSE_MIN_FILMS:
             bb_adj  = float((bb['user_rating']  - bb['imdb_rating']).mean())  - overall_bias_d5
             art_adj = float((art['user_rating'] - art['imdb_rating']).mean()) - overall_bias_d5
-            score   = round(bb_adj - art_adj, 3)   # positiv = mag Blockbuster relativ mehr
+            score   = round(bb_adj - art_adj, 3)
+            _src    = 'TMDB' if _is_tmdb else 'IMDB'
             if score > 0.3:
                 pole = 'Blockbuster-Fan'
-                desc = (f'Du bewertest große Kassenschlager (>{BLOCKBUSTER_VOTES//1000}k Votes) '
+                desc = (f'Du bewertest große Kassenschlager (>{_bb_thresh//1000}k {_src}-Votes) '
                         f'relativ {score:.2f} Punkte besser als Arthouse-Filme '
                         f'(n_bb={len(bb)}, n_art={len(art)}).')
             elif score < -0.3:
                 pole = 'Arthouse-Aficionado'
-                desc = (f'Du bewertest Nischenfilme (<{ARTHOUSE_VOTES//1000}k Votes) '
+                desc = (f'Du bewertest Nischenfilme (<{_art_thresh//1000}k {_src}-Votes) '
                         f'relativ {abs(score):.2f} Punkte besser als Blockbuster '
                         f'(n_bb={len(bb)}, n_art={len(art)}).')
             else:
@@ -662,20 +696,19 @@ def compute_genre_achievements(df):
                 'desc': f'{desc}  [{genre}: Ø{sub["user_rating"].mean():.1f}, +{diff:.1f} über deinem Schnitt, n={n_pos}]'
             })
 
-        # Hate achievement (IMDB-relativ, gleiche adaptive Logik mit negiertem Threshold)
-        if has_imdb:
+        # Hate achievement — ca. doppelter Threshold vs. positiv (Floor -0.4 statt -0.2)
+        if has_imdb and genre in GENRE_HATE_ACHIEVEMENTS:
             sub_rated = sub[sub['imdb_rating'].notna()]
             n_neg = len(sub_rated)
             if n_neg >= GENRE_MIN_FILMS:
-                # min() weil wir nach unten wollen: n=5→-0.8, n=20→-0.4, floor bei -0.2
-                # Floor -0.2: symmetrisch zum positiven Floor (0.1 wäre zu sensitiv für Hass)
-                adaptive_hate_threshold = min(-0.2, -0.8 / math.sqrt(n_neg / 5))
+                # n=5→-1.6, n=20→-0.8, n=80→-0.4 (Floor)
+                adaptive_hate_threshold = min(-0.4, -1.6 / math.sqrt(n_neg / 5))
                 adj = (sub_rated['user_rating'].mean() - sub_rated['imdb_rating'].mean()) - overall_bias
                 if adj <= adaptive_hate_threshold:
+                    h_emoji, h_name, h_desc = GENRE_HATE_ACHIEVEMENTS[genre]
                     ach.append({
-                        'emoji': '🚫', 'name': f'hasst {genre}',
-                        'desc': (f'{genre}: adj={adj:+.2f} — du magst dieses Genre deutlich weniger als '
-                                 f'dein Gesamtprofil erwarten lässt. (n={n_neg})')
+                        'emoji': h_emoji, 'name': h_name,
+                        'desc': f'{h_desc}  [{genre}: adj={adj:+.2f}, n={n_neg}]'
                     })
     return ach
 
