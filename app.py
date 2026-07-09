@@ -127,9 +127,10 @@ with st.sidebar:
     if _fb.is_available():
         _sidebar_stats = _fb.get_community_stats()
         if _sidebar_stats and _sidebar_stats.get('total_users', 0) > 0:
+            _pool_films = _sidebar_stats.get('total_films') or _sidebar_stats.get('avg_films', '?')
             st.caption(
                 f"🤝 **Filmbuddy-Pool:** {_sidebar_stats['total_users']} Nutzer · "
-                f"{_sidebar_stats['total_films']} Filme"
+                f"{_pool_films} Filme"
             )
         else:
             st.caption('🤝 **Filmbuddy-Pool:** noch leer')
@@ -734,8 +735,9 @@ if _fb.is_available():
     try:
         _footer_stats = _fb.get_community_stats()
         if _footer_stats and _footer_stats.get('total_users', 0) > 0:
+            _footer_pool_films = _footer_stats.get('total_films') or _footer_stats.get('avg_films', '')
             _footer_parts.append(
-                f"🤝 Filmbuddy-Pool: {_footer_stats['total_users']} Nutzer · {_footer_stats['total_films']} Filme"
+                f"🤝 Filmbuddy-Pool: {_footer_stats['total_users']} Nutzer · {_footer_pool_films} Filme"
             )
     except Exception:
         pass
