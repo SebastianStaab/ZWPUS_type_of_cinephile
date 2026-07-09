@@ -166,7 +166,7 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
         results = []
         for uid, their_ratings in other.items():
             common = my_keys & set(their_ratings)
-            if len(common) < 10:
+            if len(common) < 5:
                 continue
 
             mine   = np.array([my_ratings[k]    for k in common])
