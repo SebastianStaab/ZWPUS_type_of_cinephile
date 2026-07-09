@@ -97,6 +97,18 @@ with st.sidebar:
                                  max_value=2010, value=1995, step=1)
     birth_year = int(birth_year) if birth_year else None
 
+    # ── Filmbuddy-Speichern-Button ────────────────────────────────
+    if _fb.is_available():
+        _fb_btn_disabled = not (name.strip() and st.session_state.get('has_upload', False))
+        if st.button('💾 Im Filmbuddy-Pool speichern', disabled=_fb_btn_disabled, key='sb_fb_save'):
+            st.session_state['fb_save_triggered'] = True
+        if not name.strip():
+            st.caption('← Name eingeben um zu speichern')
+        elif _fb_btn_disabled:
+            st.caption('← CSV hochladen um zu speichern')
+
+    st.divider()
+
     try:
         _key_from_secrets = st.secrets['TMDB_API_KEY']
         st.session_state['tmdb_key'] = _key_from_secrets
@@ -111,14 +123,13 @@ with st.sidebar:
     # Cache-Status — Placeholder, wird auch während Enrichment aktualisiert
     _cache_status = st.empty()
 
-    # ── Filmbuddy Community-Info (immer sichtbar) ─────────────────
+    # ── Filmbuddy Community-Info ──────────────────────────────────
     if _fb.is_available():
-        st.divider()
         _sidebar_stats = _fb.get_community_stats()
         if _sidebar_stats and _sidebar_stats.get('total_users', 0) > 0:
             st.caption(
                 f"🤝 **Filmbuddy-Pool:** {_sidebar_stats['total_users']} Nutzer · "
-                f"Ø {_sidebar_stats['avg_films']} Filme"
+                f"{_sidebar_stats['total_films']} Filme"
             )
         else:
             st.caption('🤝 **Filmbuddy-Pool:** noch leer')
@@ -186,6 +197,9 @@ uploaded = st.file_uploader(
 )
 
 if not uploaded:
+    st.session_state.pop('has_upload', None)
+    st.session_state.pop('fb_match',   None)
+    st.session_state.pop('fb_save_ok', None)
     st.info('⬆️ Lade deine Ratings-CSV hoch um loszulegen.')
     with st.expander('Wie funktioniert das?'):
         st.markdown(
@@ -288,6 +302,9 @@ if _is_lb and _no_imdb:
         )
 
 
+# Datei erfolgreich geladen → Sidebar-Button freischalten
+st.session_state['has_upload'] = True
+
 # ── Profil berechnen ──────────────────────────────────────────────
 # Datenquelle bestimmen: LB-Upload → TMDB-angereichert, IMDB-Upload → IMDB-Daten
 _rating_source = 'TMDB' if 'lb_rating' in df_raw.columns else 'IMDB'
@@ -304,6 +321,76 @@ display_name = name.strip() if name.strip() else 'Anonym'
 
 # Formative-Jahre-Bias + Signifikanz
 formative_stats = compute_formative_years_stats(df, birth_year)
+
+# ── Filmbuddy: Save-Trigger abarbeiten ───────────────────────────
+if _fb.is_available() and st.session_state.get('fb_save_triggered') and name.strip():
+    st.session_state.pop('fb_save_triggered', None)
+    _all_ach = bonus + genre_ach + insider + progressive
+    with st.spinner('Speichere im Filmbuddy-Pool…'):
+        _uid = _fb.save_user_data(name.strip(), df, _all_ach)
+    if _uid:
+        st.session_state['fb_save_ok'] = len(df)
+        with st.spinner('Suche Filmbuddy & Frenemy…'):
+            st.session_state['fb_match'] = _fb.find_buddy(_uid, df)
+    else:
+        st.session_state.pop('fb_match', None)
+        st.error('Filmbuddy: Speichern fehlgeschlagen — Supabase nicht erreichbar.')
+
+# ── Filmbuddy-Kapitel (ganz oben) ────────────────────────────────
+if _fb.is_available() and st.session_state.get('fb_match') is not None:
+    st.divider()
+    st.subheader('🤝 Filmbuddy')
+    if st.session_state.get('fb_save_ok'):
+        st.success(f"✅ {st.session_state.pop('fb_save_ok')} Ratings gespeichert!")
+    _match = st.session_state['fb_match']
+    if not _match or _match.get('total_users', 0) == 0:
+        st.info('Noch zu wenige Nutzer mit Überschneidungen. Schick den Link an die Community! 🎬')
+    else:
+        buddy   = _match.get('buddy')
+        frenemy = _match.get('frenemy')
+        _bcol, _fcol = st.columns(2)
+        if buddy:
+            with _bcol:
+                st.markdown(
+                    f"<div style='background:#1a3a2a;border-radius:12px;padding:16px 20px'>"
+                    f"<h3 style='margin:0 0 4px 0'>🎬 Dein Filmbuddy</h3>"
+                    f"<p style='font-size:1.3em;font-weight:bold;margin:0 0 8px 0'>{buddy['name']}</p>",
+                    unsafe_allow_html=True
+                )
+                st.metric('Übereinstimmung', f"r = {buddy['corr']:+.2f}",
+                          help='Pearson-Korrelation (1.0 = identischer Geschmack, −1.0 = totales Gegenteil)')
+                st.caption(f"auf Basis von {buddy['n']} gemeinsamen Filmen")
+                if buddy.get('top_agree'):
+                    st.markdown('**🍿 Beide lieben:**')
+                    for _t in buddy['top_agree']:
+                        st.markdown(f'• {_t}')
+                if buddy.get('top_diff'):
+                    st.markdown('**🔀 Größte Meinungsverschiedenheiten:**')
+                    for _t, _mine, _theirs in buddy['top_diff']:
+                        _arrow = '↑' if _mine > _theirs else '↓'
+                        st.markdown(f'• {_t}: du **{_mine:.0f}** · {buddy["name"]} {_theirs:.0f} ({_arrow}{abs(_mine-_theirs):.0f})')
+                st.markdown('</div>', unsafe_allow_html=True)
+        if frenemy:
+            with _fcol:
+                st.markdown(
+                    f"<div style='background:#3a1a1a;border-radius:12px;padding:16px 20px'>"
+                    f"<h3 style='margin:0 0 4px 0'>😈 Dein Frenemy</h3>"
+                    f"<p style='font-size:1.3em;font-weight:bold;margin:0 0 8px 0'>{frenemy['name']}</p>",
+                    unsafe_allow_html=True
+                )
+                st.metric('Übereinstimmung', f"r = {frenemy['corr']:+.2f}",
+                          help='Je negativer, desto konträrer der Geschmack')
+                st.caption(f"auf Basis von {frenemy['n']} gemeinsamen Filmen")
+                if frenemy.get('top_diff'):
+                    st.markdown('**🔥 Wo ihr euch am meisten streitet:**')
+                    for _t, _mine, _theirs in frenemy['top_diff']:
+                        _arrow = '↑' if _mine > _theirs else '↓'
+                        st.markdown(f'• {_t}: du **{_mine:.0f}** · {frenemy["name"]} {_theirs:.0f} ({_arrow}{abs(_mine-_theirs):.0f})')
+                if frenemy.get('top_agree'):
+                    st.markdown('**🤝 Aber beide mögen:**')
+                    for _t in frenemy['top_agree']:
+                        st.markdown(f'• {_t}')
+                st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Achievements (ganz oben) ─────────────────────────────────────
 all_ach = progressive + bonus + genre_ach + insider
@@ -619,105 +706,6 @@ if _has_imdb_dev or _has_david or _has_robert:
 else:
     st.info('Keine IMDB-Daten verfügbar für Abweichungsanalyse — TMDB-Key eingeben oder IMDB-Export hochladen.')
 
-# ── Filmbuddy ─────────────────────────────────────────────────────
-if _fb.is_available():
-    st.divider()
-    st.subheader('🤝 Filmbuddy')
-    st.caption(
-        'Speichere dein Profil anonym und finde heraus, wessen Filmgeschmack deinem '
-        'am nächsten kommt — und wer dein **Frenemy** ist. 🍿'
-    )
-
-    _fb_name = st.text_input(
-        'Dein Name (Pflichtfeld, dient als Identifier)',
-        placeholder='z.B. Sebastian',
-        key='fb_display_name',
-    )
-    st.caption(
-        'Kein Passwort, kein Account. Beim erneuten Upload mit demselben Namen '
-        'werden deine Daten einfach aktualisiert.'
-    )
-
-    if st.button('💾 Speichern & Filmbuddy finden', disabled=not _fb_name.strip()):
-        with st.spinner('Speichere Ratings...'):
-            _all_ach = bonus + genre_ach + insider + progressive
-            _uid = _fb.save_user_data(_fb_name.strip(), df, _all_ach)
-
-        if _uid is None:
-            st.error('Speichern fehlgeschlagen — Supabase nicht erreichbar.')
-        else:
-            st.success(f'✅ {len(df)} Ratings gespeichert!')
-            with st.spinner('Suche Filmbuddy & Frenemy...'):
-                _match = _fb.find_buddy(_uid, df)
-
-            if not _match or _match.get('total_users', 0) == 0:
-                st.info(
-                    'Noch zu wenige Nutzer mit Überschneidungen für einen Vergleich. '
-                    'Schick den Link an die Community! 🎬'
-                )
-            else:
-                buddy   = _match.get('buddy')
-                frenemy = _match.get('frenemy')
-                _bcol, _fcol = st.columns(2)
-
-                if buddy:
-                    with _bcol:
-                        st.markdown(
-                            f"<div style='background:#1a3a2a;border-radius:12px;padding:16px 20px'>"
-                            f"<h3 style='margin:0 0 4px 0'>🎬 Dein Filmbuddy</h3>"
-                            f"<p style='font-size:1.3em;font-weight:bold;margin:0 0 8px 0'>{buddy['name']}</p>",
-                            unsafe_allow_html=True
-                        )
-                        st.metric(
-                            'Übereinstimmung',
-                            f"r = {buddy['corr']:+.2f}",
-                            help='Pearson-Korrelation (1.0 = identischer Geschmack, −1.0 = totales Gegenteil)'
-                        )
-                        st.caption(f"auf Basis von {buddy['n']} gemeinsamen Filmen")
-                        if buddy.get('top_agree'):
-                            st.markdown('**🍿 Beide lieben:**')
-                            for t in buddy['top_agree']:
-                                st.markdown(f'• {t}')
-                        if buddy.get('top_diff'):
-                            st.markdown('**🔀 Größte Meinungsverschiedenheiten:**')
-                            for _t, _mine, _theirs in buddy['top_diff']:
-                                _delta = _mine - _theirs
-                                _arrow = '↑' if _delta > 0 else '↓'
-                                st.markdown(
-                                    f'• {_t}: du **{_mine:.0f}** · {buddy["name"]} {_theirs:.0f} '
-                                    f'({_arrow}{abs(_delta):.0f})'
-                                )
-                        st.markdown('</div>', unsafe_allow_html=True)
-
-                if frenemy:
-                    with _fcol:
-                        st.markdown(
-                            f"<div style='background:#3a1a1a;border-radius:12px;padding:16px 20px'>"
-                            f"<h3 style='margin:0 0 4px 0'>😈 Dein Frenemy</h3>"
-                            f"<p style='font-size:1.3em;font-weight:bold;margin:0 0 8px 0'>{frenemy['name']}</p>",
-                            unsafe_allow_html=True
-                        )
-                        st.metric(
-                            'Übereinstimmung',
-                            f"r = {frenemy['corr']:+.2f}",
-                            help='Je negativer, desto konträrer der Geschmack'
-                        )
-                        st.caption(f"auf Basis von {frenemy['n']} gemeinsamen Filmen")
-                        if frenemy.get('top_diff'):
-                            st.markdown('**🔥 Wo ihr euch am meisten streitet:**')
-                            for _t, _mine, _theirs in frenemy['top_diff']:
-                                _delta = _mine - _theirs
-                                _arrow = '↑' if _delta > 0 else '↓'
-                                st.markdown(
-                                    f'• {_t}: du **{_mine:.0f}** · {frenemy["name"]} {_theirs:.0f} '
-                                    f'({_arrow}{abs(_delta):.0f})'
-                                )
-                        if frenemy.get('top_agree'):
-                            st.markdown('**🤝 Aber beide mögen:**')
-                            for t in frenemy['top_agree']:
-                                st.markdown(f'• {t}')
-                        st.markdown('</div>', unsafe_allow_html=True)
-
 # ── Debug (versteckt, nur bei Bedarf aufklappen) ─────────────────
 if _is_lb and api_key:
     with st.expander('🔧 Debug', expanded=False):
@@ -747,7 +735,7 @@ if _fb.is_available():
         _footer_stats = _fb.get_community_stats()
         if _footer_stats and _footer_stats.get('total_users', 0) > 0:
             _footer_parts.append(
-                f"🤝 Filmbuddy-Pool: {_footer_stats['total_users']} Nutzer"
+                f"🤝 Filmbuddy-Pool: {_footer_stats['total_users']} Nutzer · {_footer_stats['total_films']} Filme"
             )
     except Exception:
         pass

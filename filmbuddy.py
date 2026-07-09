@@ -307,11 +307,11 @@ def get_community_stats() -> dict:
         if not res.data:
             return {}
         total = len(res.data)
-        avg_films = round(sum(u['film_count'] for u in res.data) / total)
+        total_films = sum(u['film_count'] for u in res.data)
         return {
-            'total_users': total,
-            'avg_films':   avg_films,
-            'users':       res.data,
+            'total_users':  total,
+            'total_films':  total_films,
+            'users':        res.data,
         }
     except Exception:
         return {}
