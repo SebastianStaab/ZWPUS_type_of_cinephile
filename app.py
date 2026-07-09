@@ -28,6 +28,7 @@ from film_personality import (
     save_radar_chart, save_single_dimension_chart,
     save_formative_years_chart, compute_formative_years_stats,
 )
+import filmbuddy as _fb
 
 
 # ── Cache-Warming (Background) ───────────────────────────────────
@@ -313,7 +314,7 @@ with col_right:
     m1.metric('Eigene Ø', f'{df["user_rating"].mean():.2f}')
     if df['imdb_rating'].notna().sum() > 10:
         _bias_val = (df['user_rating'] - df['imdb_rating']).mean()
-        m2.metric('IMDB Ø', f'{df["imdb_rating"].mean():.2f}')
+        m2.metric(f'{_rating_source} Ø', f'{df["imdb_rating"].mean():.2f}')
         m3.metric('Bias', f'{_bias_val:+.2f}')
 
     # Prägende Jahre
@@ -321,21 +322,22 @@ with col_right:
         fs = formative_stats
         st.divider()
         sig_text = '(signifikant ✓)' if fs['significant'] else '(nicht signifikant)'
-        method_note = 'IMDB-bereinigt' if fs.get('has_imdb') else 'Rohrating'
+        _rs = _rating_source
+        method_note = f'{_rs}-bereinigt' if fs.get('has_imdb') else 'Rohrating'
         st.markdown(f"**🎞️ Prägende Jahre {fs['form_start']}–{fs['form_end']}** _{method_note}_")
         if fs.get('has_imdb'):
             st.caption(
                 f"Bewertest du Filme aus deinen prägenden Jahren ({fs['form_start']}–{fs['form_end']}) "
                 f"besser als den Rest? **Bias (roh)** = direkter Vergleich deiner Noten. "
-                f"**Bias (IMDB-bereinigt)** = bereinigt um Qualitätsunterschiede zwischen Ären — "
-                f"ältere Filme haben auf IMDB oft höhere Schnitte, das wird rausgerechnet. "
-                f"**Cohen's d** und **p-Wert** beziehen sich auf den IMDB-bereinigten Wert."
+                f"**Bias ({_rs}-bereinigt)** = bereinigt um Qualitätsunterschiede zwischen Ären — "
+                f"ältere Filme haben auf {_rs} oft höhere Schnitte, das wird rausgerechnet. "
+                f"**Cohen's d** und **p-Wert** beziehen sich auf den {_rs}-bereinigten Wert."
             )
         else:
             st.caption(
                 f"Bewertest du Filme aus deinen prägenden Jahren ({fs['form_start']}–{fs['form_end']}) "
                 f"besser als den Rest? Positiver Wert = Nostalgiker-Tendenz. "
-                f"Ohne IMDB-Daten kein Qualitätsabgleich möglich."
+                f"Ohne {_rs}-Daten kein Qualitätsabgleich möglich."
             )
         mc1, mc2, mc3, mc4 = st.columns(4)
         # Reihenfolge: roh zuerst (intuitiver), dann bereinigt, dann Statistik
@@ -345,8 +347,8 @@ with col_right:
                 help='Deine direkte Durchschnittsnote für Formativfilme minus den Rest. Intuitiv, aber von der Filmqualität beeinflusst.',
             )
             mc2.metric(
-                'Bias (IMDB-bereinigt)', f"{fs['bias']:+.2f}",
-                help='Gleiche Rechnung, aber jeder Film um seine IMDB-Note korrigiert. Heraus kommt: liebst du diese Filme *über* das, was ihre Qualität erwarten würde?',
+                f'Bias ({_rs}-bereinigt)', f"{fs['bias']:+.2f}",
+                help=f'Gleiche Rechnung, aber jeder Film um seine {_rs}-Note korrigiert. Heraus kommt: liebst du diese Filme *über* das, was ihre Qualität erwarten würde?',
             )
         else:
             mc1.metric(
@@ -365,7 +367,7 @@ with col_right:
         mc4.metric(
             'p-Wert', f"{fs['p_value']:.3f}",
             help=(
-                'Statistische Signifikanz des IMDB-bereinigten Bias. '
+                f'Statistische Signifikanz des {_rs}-bereinigten Bias. '
                 'p < 0.05 = Effekt ist mit >95% Wahrscheinlichkeit kein Zufall. '
                 'Bei wenigen Formativfilmen (<50) ist p oft > 0.05, auch wenn ein echter Effekt vorliegt — '
                 'dann zählt Cohen\'s d mehr.'
@@ -406,7 +408,7 @@ with col_left:
             st.markdown(f'**{d["emoji"]} {dim_labels[key]}** — {d["pole"]}')
             st.caption(d['desc'])
             _dim_path = f'/tmp/dim_{key}.png'
-            save_single_dimension_chart(key, df, dims, _dim_path)
+            save_single_dimension_chart(key, df, dims, _dim_path, rating_source=_rating_source)
             st.image(_dim_path, use_container_width=True)
 
 # ── Genre-Tabelle ─────────────────────────────────────────────────
@@ -416,14 +418,14 @@ if 'genre_all' in topflop and not topflop['genre_all'].empty:
     bias = topflop.get('overall_bias', 0.0)
     st.caption(
         f'Gesamtbias: {bias:+.2f} | '
-        f'**adj** = (eigene Ø − IMDB Ø) − Gesamtbias — '
+        f'**adj** = (eigene Ø − {_rating_source} Ø) − Gesamtbias — '
         f'positiv = magst du mehr als dein Durchschnitt erwarten lässt'
     )
     genre_df = topflop['genre_all'].copy()
     genre_df.index.name = 'Genre'
     genre_df = genre_df.rename(columns={
         'n': 'Filme', 'user_avg': 'Eigene Ø',
-        'imdb_avg': 'TMDB/IMDB Ø', 'vs_imdb': 'vs. Schnitt', 'adj': 'Adj. ▲▼'
+        'imdb_avg': f'{_rating_source} Ø', 'vs_imdb': 'vs. Schnitt', 'adj': 'Adj. ▲▼'
     })
 
     def color_adj(val):
@@ -452,7 +454,7 @@ if 'dir_all' in topflop and not topflop['dir_all'].empty:
         result = df[mask][cols_show].copy()
         result = result.rename(columns={
             'title': 'Titel', 'year': 'Jahr',
-            'user_rating': 'Eigene', 'imdb_rating': 'IMDB'
+            'user_rating': 'Eigene', 'imdb_rating': _rating_source
         }).sort_values('Eigene', ascending=False)
         return result
 
@@ -598,6 +600,99 @@ if _has_imdb_dev or _has_david or _has_robert:
 else:
     st.info('Keine IMDB-Daten verfügbar für Abweichungsanalyse — TMDB-Key eingeben oder IMDB-Export hochladen.')
 
+# ── Filmbuddy ─────────────────────────────────────────────────────
+if _fb.is_available():
+    st.divider()
+    st.subheader('🤝 Filmbuddy')
+    _stats = _fb.get_community_stats()
+    if _stats:
+        st.caption(
+            f"{_stats['total_users']} Nutzer in der Community · "
+            f"Ø {_stats['avg_films']} Filme pro Person"
+        )
+
+    # ── Einmaliger Seed (nur wenn DB leer) ────────────────────────
+    if not _stats or _stats.get('total_users', 0) == 0:
+        st.info('Die Datenbank ist noch leer. David und Robert können einmalig als erste Nutzer eingetragen werden.')
+        if st.button('🌱 David & Robert als erste Nutzer eintragen'):
+            import os as _os
+            _seed_dir = _os.path.dirname(_os.path.abspath(__file__))
+            _david_path  = _os.path.join(_seed_dir, 'david_ratings.csv')
+            _robert_path = _os.path.join(_seed_dir, 'robert_ratings.csv')
+            with st.spinner('Seed läuft...'):
+                _seed_msg = _fb.seed_initial_users(_david_path, _robert_path)
+            st.text(_seed_msg)
+            st.rerun()
+
+    with st.expander('Ergebnisse speichern & Filmbuddy finden', expanded=False):
+        st.markdown(
+            'Speichere dein Profil anonym in der ZWPUS-Community-Datenbank '
+            'und finde heraus, wessen Filmgeschmack deinem am nächsten kommt — '
+            'und wer dein **Frenemy** ist. 🍿'
+        )
+        st.caption(
+            '⚠️ Deine Ratings und Achievements werden gespeichert und mit anderen Nutzern verglichen. '
+            'Kein Passwort, kein Account — nur dein Name als Identifier. '
+            'Beim erneuten Upload mit demselben Namen werden deine Daten aktualisiert.'
+        )
+
+        _fb_name = st.text_input(
+            'Dein Name (wird angezeigt)',
+            placeholder='z.B. Sebastian',
+            key='fb_display_name',
+        )
+
+        if st.button('💾 Speichern & Buddy finden', disabled=not _fb_name.strip()):
+            with st.spinner('Speichere Ratings...'):
+                _all_ach = bonus + genre_ach + insider + progressive
+                _uid = _fb.save_user_data(_fb_name.strip(), df, _all_ach)
+
+            if _uid is None:
+                st.error('Speichern fehlgeschlagen — Supabase nicht erreichbar.')
+            else:
+                st.success(f'✅ {len(df)} Ratings gespeichert!')
+                with st.spinner('Suche Filmbuddy...'):
+                    _match = _fb.find_buddy(_uid, df)
+
+                if not _match or _match.get('total_users', 0) == 0:
+                    st.info(
+                        'Noch zu wenige Nutzer mit Überschneidungen für einen Vergleich. '
+                        'Schick den Link an die Community! 🎬'
+                    )
+                else:
+                    _bcol, _fcol = st.columns(2)
+
+                    buddy = _match.get('buddy')
+                    if buddy:
+                        with _bcol:
+                            st.markdown(f"### 🎬 Dein Filmbuddy: **{buddy['name']}**")
+                            st.metric('Übereinstimmung', f"r = {buddy['corr']:+.2f}",
+                                      help='Pearson-Korrelation (1.0 = identischer Geschmack)')
+                            st.caption(f"{buddy['n']} gemeinsame Filme")
+                            if buddy.get('top_agree'):
+                                st.markdown('**Beide lieben:**')
+                                for t in buddy['top_agree']:
+                                    st.markdown(f'- {t}')
+                            if buddy.get('top_diff'):
+                                st.markdown('**Größte Meinungsverschiedenheiten:**')
+                                for title, mine, theirs in buddy['top_diff']:
+                                    st.markdown(
+                                        f'- {title}: du {mine:.0f} · {buddy["name"]} {theirs:.0f}'
+                                    )
+
+                    frenemy = _match.get('frenemy')
+                    if frenemy:
+                        with _fcol:
+                            st.markdown(f"### 😈 Dein Frenemy: **{frenemy['name']}**")
+                            st.metric('Übereinstimmung', f"r = {frenemy['corr']:+.2f}")
+                            st.caption(f"{frenemy['n']} gemeinsame Filme")
+                            if frenemy.get('top_diff'):
+                                st.markdown('**Größte Meinungsverschiedenheiten:**')
+                                for title, mine, theirs in frenemy['top_diff']:
+                                    st.markdown(
+                                        f'- {title}: du {mine:.0f} · {frenemy["name"]} {theirs:.0f}'
+                                    )
+
 # ── Debug (versteckt, nur bei Bedarf aufklappen) ─────────────────
 if _is_lb and api_key:
     with st.expander('🔧 Debug', expanded=False):
@@ -619,6 +714,6 @@ if _is_lb and api_key:
 st.divider()
 st.caption(
     '🎙️ [Zwei wie Pech & Schwafel](https://open.spotify.com/show/22pGOX5N9KjeJajq1aH7Nt) • '
-    'Daten: Letterboxd + IMDB + TMDB • '
-    'Ratings werden nicht gespeichert.'
+    f'Daten: {"Letterboxd + TMDB" if _rating_source == "TMDB" else "IMDB"} • '
+    'Ratings werden nur bei Opt-in gespeichert.'
 )

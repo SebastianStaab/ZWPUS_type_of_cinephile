@@ -49,11 +49,12 @@ MAINSTREAMER_CORR     = 0.60
 REBELL_CORR           = 0.00
 BLOCKBUSTER_VOTES     = 500_000  # Min. Votes → als Blockbuster (IMDB-Daten)
 ARTHOUSE_VOTES        = 50_000   # Max. Votes → als Arthouse   (IMDB-Daten)
-BLOCKBUSTER_VOTES_TMDB = 10_000  # Min. Votes für TMDB-Daten (Avengers ~30K, normale Blockbuster ~5-15K)
-ARTHOUSE_VOTES_TMDB    = 500     # Max. Votes für TMDB-Daten (echte Arthouse-Filme)
+BLOCKBUSTER_VOTES_TMDB = 15_000  # Min. Votes für TMDB-Daten (Avengers ~30K, La La Land ~18K)
+ARTHOUSE_VOTES_TMDB    = 3_000   # Max. Votes für TMDB-Daten (Portrait of a Lady ~4K, First Reformed ~2K)
 BLOCKBUSTER_MIN_FILMS  = 10
 BLOCKBUSTER_MIN_FILMS_TMDB = 5   # Weniger Filme qualifizieren sich bei TMDB-Schwellen
 ARTHOUSE_MIN_FILMS    = 5
+ARTHOUSE_MIN_FILMS_TMDB = 3      # Arthouse-Filme sind seltener in kleinen Sammlungen
 BLOCKBUSTER_DIFF      = 0.5      # user_avg_blockbuster - gesamt_avg > X
 ARTHOUSE_DIFF         = 0.5
 
@@ -510,18 +511,24 @@ def compute_dimensions(df, rating_source='IMDB'):
                            'label': 'Lieblingsepoche', 'emoji': '🕰️'}
 
     # ── D5: Blockbuster ↔ Arthouse ────────────────────────────────────
-    if 'num_votes' in df.columns and df['num_votes'].notna().sum() >= 20:
-        # Automatische Erkennung: TMDB-Vote-Counts sind ~10x kleiner als IMDB
-        _median_votes = df['num_votes'].dropna().median()
-        _is_tmdb = _median_votes < 100_000
-        _bb_thresh  = BLOCKBUSTER_VOTES_TMDB    if _is_tmdb else BLOCKBUSTER_VOTES
-        _art_thresh = ARTHOUSE_VOTES_TMDB       if _is_tmdb else ARTHOUSE_VOTES
-        _bb_min     = BLOCKBUSTER_MIN_FILMS_TMDB if _is_tmdb else BLOCKBUSTER_MIN_FILMS
+    _nv_col = 'num_votes' in df.columns
+    _nv_cnt = df['num_votes'].notna().sum() if _nv_col else 0
+    print(f'  D5: num_votes col={_nv_col}, notna={_nv_cnt}, rating_source={RS}')
+    if _nv_col and _nv_cnt >= 20:
+        _is_tmdb    = (RS == 'TMDB')
+        _bb_thresh  = BLOCKBUSTER_VOTES_TMDB     if _is_tmdb else BLOCKBUSTER_VOTES
+        _art_thresh = ARTHOUSE_VOTES_TMDB        if _is_tmdb else ARTHOUSE_VOTES
+        _bb_min     = BLOCKBUSTER_MIN_FILMS_TMDB  if _is_tmdb else BLOCKBUSTER_MIN_FILMS
+        _art_min    = ARTHOUSE_MIN_FILMS_TMDB     if _is_tmdb else ARTHOUSE_MIN_FILMS
 
         overall_bias_d5 = float((df['user_rating'] - df['imdb_rating']).mean())
         bb  = df[(df['num_votes'] >= _bb_thresh)  & df['imdb_rating'].notna()]
         art = df[(df['num_votes'] <= _art_thresh) & df['imdb_rating'].notna()]
-        if len(bb) >= _bb_min and len(art) >= ARTHOUSE_MIN_FILMS:
+        _nv_vals = df['num_votes'].dropna()
+        print(f'  D5: bb_thresh={_bb_thresh}, art_thresh={_art_thresh}, '
+              f'n_bb={len(bb)}, n_art={len(art)}, '
+              f'votes median={_nv_vals.median():.0f}, min={_nv_vals.min():.0f}, max={_nv_vals.max():.0f}')
+        if len(bb) >= _bb_min and len(art) >= _art_min:
             bb_adj  = float((bb['user_rating']  - bb['imdb_rating']).mean())  - overall_bias_d5
             art_adj = float((art['user_rating'] - art['imdb_rating']).mean()) - overall_bias_d5
             score   = round(bb_adj - art_adj, 3)
@@ -584,11 +591,10 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
 
     # ── Blockbuster-Bro / Arthouse-Snob ──────────────────────────
     if 'num_votes' in df.columns:
-        _med_v = df['num_votes'].dropna().median() if df['num_votes'].notna().any() else 999_999
-        _is_tmdb_b = _med_v < 100_000
-        _bb_v   = BLOCKBUSTER_VOTES_TMDB    if _is_tmdb_b else BLOCKBUSTER_VOTES
-        _art_v  = ARTHOUSE_VOTES_TMDB       if _is_tmdb_b else ARTHOUSE_VOTES
-        _bb_min = BLOCKBUSTER_MIN_FILMS_TMDB if _is_tmdb_b else BLOCKBUSTER_MIN_FILMS
+        _is_tmdb_b = (RS == 'TMDB')
+        _bb_v   = BLOCKBUSTER_VOTES_TMDB     if _is_tmdb_b else BLOCKBUSTER_VOTES
+        _art_v  = ARTHOUSE_VOTES_TMDB        if _is_tmdb_b else ARTHOUSE_VOTES
+        _bb_min = BLOCKBUSTER_MIN_FILMS_TMDB  if _is_tmdb_b else BLOCKBUSTER_MIN_FILMS
         bb_films = df[df['num_votes'] >= _bb_v]
         art_films = df[df['num_votes'] <= _art_v]
         if len(bb_films) >= _bb_min:
@@ -661,6 +667,35 @@ def compute_bonus_achievements(df, birth_year=None, david_df=None, robert_df=Non
         elif not np.isnan(corr_r):
             ach.append({'emoji': '🔵', 'name': 'Team Robert',
                         'desc': f'Korrelation mit Robert: r={corr_r:.2f} (n={n_r}). David hat zu wenig Überschneidungen.'})
+
+    # ── Würde sogar gegen David im Armdrücken verlieren 💪 ──────────
+    # Trigger: User hasst Sportfilme mehr als David
+    # Benötigt: Genres (aus TMDB/IMDB) + David-Ratings für Schnittmenge
+    if david_df is not None and 'genres' in df.columns:
+        try:
+            _sport_user = df[df['genres'].str.contains('Sportfilm', na=False)]
+            if len(_sport_user) >= 3:
+                _user_sport_avg = _sport_user['user_rating'].mean()
+                # David-Schnitt für dieselben Sportfilme ermitteln
+                _sport_merged = _sport_user.merge(
+                    david_df[['title_norm', 'year', 'david_rating']],
+                    on=['title_norm', 'year'], how='inner'
+                )
+                if len(_sport_merged) >= 3:
+                    _david_sport_avg = _sport_merged['david_rating'].mean()
+                    if _user_sport_avg < _david_sport_avg:
+                        ach.append({
+                            'emoji': '🤼',
+                            'name': 'Würde sogar gegen David im Armdrücken verlieren',
+                            'desc': (
+                                f'David hasst Sportfilme — aber du noch mehr. '
+                                f'Dein Schnitt: {_user_sport_avg:.1f}, Davids Schnitt: {_david_sport_avg:.1f} '
+                                f'(auf {len(_sport_merged)} gemeinsamen Sportfilmen). '
+                                f'Selbst beim Armdrücken bist du der Underdog.'
+                            )
+                        })
+        except Exception:
+            pass
 
     return ach
 
@@ -1010,7 +1045,7 @@ def save_formative_years_chart(df, birth_year, out_path):
     plt.close(fig)
 
 
-def save_single_dimension_chart(key, df, dims, out_path):
+def save_single_dimension_chart(key, df, dims, out_path, rating_source='IMDB'):
     """
     Einzelner Chart für eine Persönlichkeitsdimension (größer als im 2x2-Grid).
     key: 'bewertungsstil' | 'meinungsstaerke' | 'geschmacksbreite' | 'epoche'
@@ -1066,9 +1101,9 @@ def save_single_dimension_chart(key, df, dims, out_path):
             _mse_val = float((diff ** 2).mean())
             ax.text(0.97, 0.93, f'MSE={_mse_val:.2f}', transform=ax.transAxes,
                     color='#aaaaaa', fontsize=8, ha='right', va='top')
-            _style(f'Meinungsstärke — {pole}', 'Eigene − IMDB', 'Filme')
+            _style(f'Meinungsstärke — {pole}', f'Eigene − {rating_source}', 'Filme')
         else:
-            # Fallback ohne IMDB: Verteilung eigener Ratings
+            # Fallback ohne Crowd-Daten: Verteilung eigener Ratings
             counts = [(df['user_rating'] == i).sum() for i in range(1, 11)]
             ax.bar(range(1, 11), counts, color=COLOR, alpha=0.85, width=0.72, zorder=3)
             mean_r = df['user_rating'].mean()
@@ -1077,7 +1112,7 @@ def save_single_dimension_chart(key, df, dims, out_path):
             ax.text(0.97, 0.93, f'MSE={_mse_own:.2f}', transform=ax.transAxes,
                     color='#aaaaaa', fontsize=8, ha='right', va='top')
             ax.set_xticks(range(1, 11))
-            _style(f'Meinungsstärke — {pole}  (kein IMDB-Vergleich)', 'Rating (1–10)', 'Filme')
+            _style(f'Meinungsstärke — {pole}  (kein {rating_source}-Vergleich)', 'Rating (1–10)', 'Filme')
 
     elif key == 'geschmacksbreite':
         gdf = explode_genres(df)
@@ -1111,12 +1146,15 @@ def save_single_dimension_chart(key, df, dims, out_path):
 
     elif key == 'publikum':
         if 'num_votes' in df.columns and df['num_votes'].notna().sum() >= 10:
-            from film_personality import BLOCKBUSTER_VOTES, ARTHOUSE_VOTES
+            _is_tmdb_c = (rating_source == 'TMDB')
+            _bb_v  = BLOCKBUSTER_VOTES_TMDB if _is_tmdb_c else BLOCKBUSTER_VOTES
+            _art_v = ARTHOUSE_VOTES_TMDB    if _is_tmdb_c else ARTHOUSE_VOTES
+            _src   = rating_source
             overall_bias = float((df['user_rating'] - df['imdb_rating']).mean())
             cats = [
-                ('Arthouse\n(<50k Votes)',  df[df['num_votes'] <= ARTHOUSE_VOTES]),
-                ('Mitte\n(50k–500k)',        df[(df['num_votes'] > ARTHOUSE_VOTES) & (df['num_votes'] < BLOCKBUSTER_VOTES)]),
-                ('Blockbuster\n(>500k Votes)', df[df['num_votes'] >= BLOCKBUSTER_VOTES]),
+                (f'Arthouse\n(<{_art_v//1000}k {_src})',          df[df['num_votes'] <= _art_v]),
+                (f'Mitte\n({_art_v//1000}k–{_bb_v//1000}k)',      df[(df['num_votes'] > _art_v) & (df['num_votes'] < _bb_v)]),
+                (f'Blockbuster\n(>{_bb_v//1000}k {_src})',         df[df['num_votes'] >= _bb_v]),
             ]
             labels_c, adjs, ns = [], [], []
             for lbl, sub in cats:
