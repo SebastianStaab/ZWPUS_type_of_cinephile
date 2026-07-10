@@ -165,8 +165,11 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
 
         # Korrelation für jeden anderen User berechnen
         results = []
+        debug_per_user: dict[str, int] = {}   # name → n_common (alle User, auch < 3)
         for uid, their_ratings in other.items():
             common = my_keys & set(their_ratings)
+            uname = user_names.get(uid, '???')
+            debug_per_user[uname] = len(common)
             if len(common) < 3:
                 continue
 
@@ -224,14 +227,16 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
             })
 
         if not results:
-            return {'buddy': None, 'frenemy': None, 'total_users': 0}
+            return {'buddy': None, 'frenemy': None, 'total_users': 0,
+                    'debug_per_user': debug_per_user}
 
         results.sort(key=lambda x: x['corr'], reverse=True)
         # Frenemy: schlechteste Korrelation — auch wenn nur 1 Person (dann buddy == frenemy)
         return {
-            'buddy':       results[0],
-            'frenemy':     results[-1],
-            'total_users': len(results),
+            'buddy':          results[0],
+            'frenemy':        results[-1],
+            'total_users':    len(results),
+            'debug_per_user': debug_per_user,
         }
 
     except Exception as e:

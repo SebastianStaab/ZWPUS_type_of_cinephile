@@ -356,6 +356,12 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
     _match = st.session_state['fb_match']
     if not _match or _match.get('total_users', 0) == 0:
         st.info('Noch zu wenige Nutzer mit Überschneidungen. Schick den Link an die Community! 🎬')
+        _dpu0 = _match.get('debug_per_user', {}) if _match else {}
+        if _dpu0:
+            with st.expander('🔍 Gemeinsame Filme pro Nutzer', expanded=True):
+                for _uname, _n in sorted(_dpu0.items(), key=lambda x: x[1], reverse=True):
+                    _flag = ' ✅' if _n >= 3 else ' ⚠️ (< 3, kein Match)'
+                    st.write(f'**{_uname}**: {_n} gemeinsame Filme{_flag}')
     else:
         buddy   = _match.get('buddy')
         frenemy = _match.get('frenemy')
@@ -443,6 +449,14 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
                 _render_person(frenemy, '#3a1a1a', '😈', 'Dein Frenemy', show_agree=not _same)
                 if _same:
                     st.caption('Noch zu wenige Vergleichspersonen — mit mehr Nutzern bekommst du einen echten Frenemy.')
+
+        # Debug: Gemeinsame Filme pro Nutzer (zusammenklappbar)
+        _dpu = _match.get('debug_per_user', {})
+        if _dpu:
+            with st.expander('🔍 Gemeinsame Filme pro Nutzer', expanded=False):
+                for _uname, _n in sorted(_dpu.items(), key=lambda x: x[1], reverse=True):
+                    _flag = ' ✅' if _n >= 3 else ' ⚠️ (< 3, kein Match)'
+                    st.write(f'**{_uname}**: {_n} gemeinsame Filme{_flag}')
 
 # ── Achievements (ganz oben) ─────────────────────────────────────
 all_ach = progressive + bonus + genre_ach + insider
