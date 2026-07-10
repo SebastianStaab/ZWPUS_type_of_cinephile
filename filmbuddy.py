@@ -153,6 +153,7 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
             client.table('fb_ratings')
             .select('user_id, title_norm, year, user_rating')
             .neq('user_id', user_id)
+            .limit(100_000)   # Supabase-Default ist 1000 — explizit erhöhen
             .execute()
         )
 
@@ -166,7 +167,7 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
         results = []
         for uid, their_ratings in other.items():
             common = my_keys & set(their_ratings)
-            if len(common) < 5:
+            if len(common) < 3:
                 continue
 
             mine   = np.array([my_ratings[k]    for k in common])
@@ -179,14 +180,14 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
             if np.isnan(corr):
                 continue
 
-            # Beste Übereinstimmungen: beide geben ≥ 8
+            # Beste Übereinstimmungen: beide geben ≥ 7, als Tupel mit Ratings
             top_agree = [
-                k.split('|')[0]
+                (k.split('|')[0], my_ratings[k], their_ratings[k])
                 for k in sorted(common,
                                 key=lambda k: min(my_ratings[k], their_ratings[k]),
                                 reverse=True)
-                if my_ratings[k] >= 8 and their_ratings[k] >= 8
-            ][:3]
+                if my_ratings[k] >= 7 and their_ratings[k] >= 7
+            ][:5]
 
             # Größte Abweichungen
             top_diff = [
@@ -194,23 +195,42 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                 for k in sorted(common,
                                 key=lambda k: abs(my_ratings[k] - their_ratings[k]),
                                 reverse=True)
-            ][:3]
+            ][:5]
+
+            # Deal Breaker: Differenz ≥ 5 Punkte
+            dealbreaker = [
+                (k.split('|')[0], my_ratings[k], their_ratings[k])
+                for k in sorted(common,
+                                key=lambda k: abs(my_ratings[k] - their_ratings[k]),
+                                reverse=True)
+                if abs(my_ratings[k] - their_ratings[k]) >= 5
+            ][:5]
+
+            # Rating-Pairs für Scatter-Vergleich (max 300)
+            _common_list = list(common)
+            rating_pairs = [
+                (my_ratings[k], their_ratings[k])
+                for k in _common_list[:300]
+            ]
 
             results.append({
-                'name':       user_names.get(uid, '???'),
-                'corr':       round(corr, 3),
-                'n':          len(common),
-                'top_agree':  top_agree,
-                'top_diff':   top_diff,
+                'name':         user_names.get(uid, '???'),
+                'corr':         round(corr, 3),
+                'n':            len(common),
+                'top_agree':    top_agree,
+                'top_diff':     top_diff,
+                'dealbreaker':  dealbreaker,
+                'rating_pairs': rating_pairs,
             })
 
         if not results:
             return {'buddy': None, 'frenemy': None, 'total_users': 0}
 
         results.sort(key=lambda x: x['corr'], reverse=True)
+        # Frenemy: schlechteste Korrelation — auch wenn nur 1 Person (dann buddy == frenemy)
         return {
             'buddy':       results[0],
-            'frenemy':     results[-1] if len(results) > 1 else None,
+            'frenemy':     results[-1],
             'total_users': len(results),
         }
 

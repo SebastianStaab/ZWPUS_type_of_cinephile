@@ -340,58 +340,106 @@ if _fb.is_available() and st.session_state.get('fb_save_triggered') and name.str
 # ── Filmbuddy-Kapitel (ganz oben) ────────────────────────────────
 if _fb.is_available() and st.session_state.get('fb_match') is not None:
     st.divider()
-    st.subheader('🤝 Filmbuddy')
+    _fb_hcol, _fb_bcol = st.columns([3, 1])
+    _fb_hcol.subheader('🤝 Filmbuddy')
     if st.session_state.get('fb_save_ok'):
         st.success(f"✅ {st.session_state.pop('fb_save_ok')} Ratings gespeichert!")
+    # Re-Calculate Button
+    if _fb_bcol.button('🔄 Neu berechnen', key='fb_recalc',
+                        help='Erneut matchen — sinnvoll wenn neue Nutzer dazugekommen sind'):
+        if name.strip():
+            with st.spinner('Suche Filmbuddy & Frenemy…'):
+                _recalc_uid = _fb.save_user_data(name.strip(), df,
+                                                  bonus + genre_ach + insider + progressive)
+                if _recalc_uid:
+                    st.session_state['fb_match'] = _fb.find_buddy(_recalc_uid, df)
+            st.rerun()
+
     _match = st.session_state['fb_match']
     if not _match or _match.get('total_users', 0) == 0:
         st.info('Noch zu wenige Nutzer mit Überschneidungen. Schick den Link an die Community! 🎬')
     else:
         buddy   = _match.get('buddy')
         frenemy = _match.get('frenemy')
+        _same   = buddy and frenemy and buddy['name'] == frenemy['name']
         _bcol, _fcol = st.columns(2)
+
+        def _corr_to_pct(r):
+            return int(round((r + 1) / 2 * 100))
+
+        def _render_table(rows, col_me, col_them):
+            if not rows:
+                return
+            _df_t = pd.DataFrame(rows, columns=['Film', col_me, col_them])
+            _df_t['Film'] = _df_t['Film'].str.title()
+            _df_t[col_me]   = _df_t[col_me].apply(lambda x: f'{x:.0f}')
+            _df_t[col_them] = _df_t[col_them].apply(lambda x: f'{x:.0f}')
+            st.dataframe(_df_t, use_container_width=True, hide_index=True)
+
+        def _scatter_chart(pairs, name_a, name_b):
+            """Scatter-Plot: x = eigene Ratings, y = Ratings der anderen Person."""
+            if not pairs:
+                return
+            _xs = [p[0] for p in pairs]
+            _ys = [p[1] for p in pairs]
+            _fig, _ax = plt.subplots(figsize=(4, 4))
+            _fig.patch.set_facecolor('#0e1117')
+            _ax.set_facecolor('#0e1117')
+            _ax.scatter(_xs, _ys, alpha=0.35, s=18, color='#4fc3f7')
+            _ax.plot([1, 10], [1, 10], '--', color='#888', linewidth=0.8, label='Perfekte Übereinstimmung')
+            _ax.set_xlabel(f'Du', color='white', fontsize=9)
+            _ax.set_ylabel(name_b, color='white', fontsize=9)
+            _ax.set_xlim(0.5, 10.5); _ax.set_ylim(0.5, 10.5)
+            _ax.tick_params(colors='white', labelsize=8)
+            for spine in _ax.spines.values():
+                spine.set_edgecolor('#444')
+            _ax.set_title(f'{name_a} vs. {name_b}', color='white', fontsize=10)
+            plt.tight_layout()
+            st.pyplot(_fig, use_container_width=True)
+            plt.close(_fig)
+
+        def _render_person(person, bg, emoji, label, show_agree=True):
+            _pct = _corr_to_pct(person['corr'])
+            st.markdown(
+                f"<div style='background:{bg};border-radius:12px;padding:14px 18px;margin-bottom:8px'>"
+                f"<h3 style='margin:0 0 2px 0'>{emoji} {label}</h3>"
+                f"<p style='font-size:1.4em;font-weight:bold;margin:0'>{person['name']}</p>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+            _m1, _m2 = st.columns(2)
+            _m1.metric('Match-Score', f'{_pct}%',
+                       help='(Pearson r + 1) / 2 × 100 — 100% = identischer Geschmack')
+            _m2.metric('Gemeinsame Filme', person['n'])
+
+            # Scatter
+            if person.get('rating_pairs'):
+                _scatter_chart(person['rating_pairs'], display_name, person['name'])
+
+            # Deal Breaker
+            if person.get('dealbreaker'):
+                st.markdown(f'**💔 Deal Breaker** *(Differenz ≥ 5 Punkte)*')
+                _render_table(person['dealbreaker'], 'Du', person['name'])
+
+            # Beide lieben
+            if show_agree and person.get('top_agree'):
+                st.markdown(f'**🍿 Ihr liebt beide**')
+                _render_table(person['top_agree'], 'Du', person['name'])
+
+            # Meinungsverschiedenheiten
+            if person.get('top_diff'):
+                st.markdown(f'**🔀 Größte Meinungsverschiedenheiten**')
+                _render_table(person['top_diff'], 'Du', person['name'])
+
         if buddy:
             with _bcol:
-                st.markdown(
-                    f"<div style='background:#1a3a2a;border-radius:12px;padding:16px 20px'>"
-                    f"<h3 style='margin:0 0 4px 0'>🎬 Dein Filmbuddy</h3>"
-                    f"<p style='font-size:1.3em;font-weight:bold;margin:0 0 8px 0'>{buddy['name']}</p>",
-                    unsafe_allow_html=True
-                )
-                st.metric('Übereinstimmung', f"r = {buddy['corr']:+.2f}",
-                          help='Pearson-Korrelation (1.0 = identischer Geschmack, −1.0 = totales Gegenteil)')
-                st.caption(f"auf Basis von {buddy['n']} gemeinsamen Filmen")
-                if buddy.get('top_agree'):
-                    st.markdown('**🍿 Beide lieben:**')
-                    for _t in buddy['top_agree']:
-                        st.markdown(f'• {_t}')
-                if buddy.get('top_diff'):
-                    st.markdown('**🔀 Größte Meinungsverschiedenheiten:**')
-                    for _t, _mine, _theirs in buddy['top_diff']:
-                        _arrow = '↑' if _mine > _theirs else '↓'
-                        st.markdown(f'• {_t}: du **{_mine:.0f}** · {buddy["name"]} {_theirs:.0f} ({_arrow}{abs(_mine-_theirs):.0f})')
-                st.markdown('</div>', unsafe_allow_html=True)
+                _render_person(buddy, '#1a3a2a', '🎬', 'Dein Filmbuddy', show_agree=True)
+
         if frenemy:
             with _fcol:
-                st.markdown(
-                    f"<div style='background:#3a1a1a;border-radius:12px;padding:16px 20px'>"
-                    f"<h3 style='margin:0 0 4px 0'>😈 Dein Frenemy</h3>"
-                    f"<p style='font-size:1.3em;font-weight:bold;margin:0 0 8px 0'>{frenemy['name']}</p>",
-                    unsafe_allow_html=True
-                )
-                st.metric('Übereinstimmung', f"r = {frenemy['corr']:+.2f}",
-                          help='Je negativer, desto konträrer der Geschmack')
-                st.caption(f"auf Basis von {frenemy['n']} gemeinsamen Filmen")
-                if frenemy.get('top_diff'):
-                    st.markdown('**🔥 Wo ihr euch am meisten streitet:**')
-                    for _t, _mine, _theirs in frenemy['top_diff']:
-                        _arrow = '↑' if _mine > _theirs else '↓'
-                        st.markdown(f'• {_t}: du **{_mine:.0f}** · {frenemy["name"]} {_theirs:.0f} ({_arrow}{abs(_mine-_theirs):.0f})')
-                if frenemy.get('top_agree'):
-                    st.markdown('**🤝 Aber beide mögen:**')
-                    for _t in frenemy['top_agree']:
-                        st.markdown(f'• {_t}')
-                st.markdown('</div>', unsafe_allow_html=True)
+                _render_person(frenemy, '#3a1a1a', '😈', 'Dein Frenemy', show_agree=not _same)
+                if _same:
+                    st.caption('Noch zu wenige Vergleichspersonen — mit mehr Nutzern bekommst du einen echten Frenemy.')
 
 # ── Achievements (ganz oben) ─────────────────────────────────────
 all_ach = progressive + bonus + genre_ach + insider
