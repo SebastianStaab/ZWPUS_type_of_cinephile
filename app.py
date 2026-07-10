@@ -340,29 +340,9 @@ if _fb.is_available() and st.session_state.get('fb_save_triggered') and name.str
 # ── Filmbuddy-Kapitel (ganz oben) ────────────────────────────────
 if _fb.is_available() and st.session_state.get('fb_match') is not None:
     st.divider()
-    _fb_hcol, _fb_bcol = st.columns([3, 1])
-    _fb_hcol.subheader('🤝 Filmbuddy')
+    st.subheader('🤝 Filmbuddy')
     if st.session_state.get('fb_save_ok'):
         st.success(f"✅ {st.session_state.pop('fb_save_ok')} Ratings gespeichert!")
-    # Re-Calculate Button — matcht neu ohne erneutes Speichern
-    if _fb_bcol.button('🔄 Neu berechnen', key='fb_recalc',
-                        help='Erneut matchen — sinnvoll wenn neue Nutzer dazugekommen sind'):
-        _existing_uid = st.session_state.get('fb_user_id')
-        if _existing_uid:
-            with st.spinner('Suche Filmbuddy & Frenemy…'):
-                st.session_state['fb_match'] = _fb.find_buddy(_existing_uid, df)
-            st.rerun()
-        elif name.strip():
-            with st.spinner('Speichere & matche…'):
-                _recalc_uid = _fb.save_user_data(name.strip(), df,
-                                                  bonus + genre_ach + insider + progressive)
-                if _recalc_uid:
-                    st.session_state['fb_user_id'] = _recalc_uid
-                    st.session_state['fb_match'] = _fb.find_buddy(_recalc_uid, df)
-                else:
-                    st.error('Speichern fehlgeschlagen.')
-            st.rerun()
-
     _match = st.session_state['fb_match']
     if not _match or _match.get('total_users', 0) == 0:
         st.info('Noch zu wenige Nutzer mit Überschneidungen. Schick den Link an die Community! 🎬')
