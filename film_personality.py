@@ -1293,7 +1293,7 @@ def save_dimension_detail_charts(name, df, dims, out_path):
     print(f'  Detail-Charts gespeichert: {out_path}')
 
 
-def save_radar_chart(name, dims, out_path):
+def save_radar_chart(name, dims, out_path, buddy_name=None, buddy_dims_raw=None):
     """
     Radar-Chart der 4 Persönlichkeitsdimensionen.
     Jede Achse zeigt einen normalisierten Score 0–1, wobei:
@@ -1363,10 +1363,23 @@ def save_radar_chart(name, dims, out_path):
                 fontsize=10, color='grey')
 
     ax.fill(angles, scores_plot, color='#e84545', alpha=0.25)
-    ax.plot(angles, scores_plot, color='#e84545', lw=2.5)
+    ax.plot(angles, scores_plot, color='#e84545', lw=2.5, label=name)
     ax.scatter(angles[:-1], scores, color='#e84545', s=60, zorder=5)
 
-    ax.set_title(f'Filmpersoenlichkeit: {name}', size=13, pad=20, fontweight='bold')
+    # Buddy-Overlay (wenn vorhanden)
+    if buddy_dims_raw:
+        _bd = {k: {'score': v} for k, v in buddy_dims_raw.items()}
+        buddy_scores      = [norm_score(k, _bd) for k, _, _ in _dim_cfg]
+        buddy_scores_plot = buddy_scores + [buddy_scores[0]]
+        ax.fill(angles, buddy_scores_plot, color='#4fc3f7', alpha=0.15)
+        ax.plot(angles, buddy_scores_plot, color='#4fc3f7', lw=2.0,
+                linestyle='--', label=buddy_name or 'Buddy')
+        ax.scatter(angles[:-1], buddy_scores, color='#4fc3f7', s=45, zorder=4)
+        ax.legend(loc='upper right', fontsize=8, framealpha=0.3,
+                  labelcolor='white', facecolor='#222')
+
+    _title = f'{name}' + (f' vs. {buddy_name}' if buddy_name else '')
+    ax.set_title(_title, size=12, pad=20, fontweight='bold')
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)

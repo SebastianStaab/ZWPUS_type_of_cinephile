@@ -328,7 +328,7 @@ if _fb.is_available() and st.session_state.get('fb_save_triggered') and name.str
     st.session_state.pop('fb_save_triggered', None)
     _all_ach = bonus + genre_ach + insider + progressive
     with st.spinner('Speichere im Filmbuddy-Pool…'):
-        _uid = _fb.save_user_data(name.strip(), df, _all_ach)
+        _uid = _fb.save_user_data(name.strip(), df, _all_ach, dims=dims)
     if _uid:
         st.session_state['fb_save_ok'] = len(df)
         with st.spinner('Suche Filmbuddy & Frenemy…'):
@@ -429,6 +429,54 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             if person.get('top_diff'):
                 st.markdown(f'**🔀 Größte Meinungsverschiedenheiten**')
                 _render_table(person['top_diff'], 'Du', person['name'])
+
+            # Erster gemeinsamer Kinoabend
+            if person.get('kinoabend'):
+                _kb = person['kinoabend']
+                _kb_title = str(_kb[0]).title() if isinstance(_kb, (list, tuple)) else str(_kb)
+                _kb_me    = f"{float(_kb[1]):.0f}" if isinstance(_kb, (list, tuple)) and len(_kb) > 1 else '—'
+                _kb_them  = f"{float(_kb[2]):.0f}" if isinstance(_kb, (list, tuple)) and len(_kb) > 2 else '—'
+                st.markdown(
+                    f"<div style='background:#1a2a3a;border-radius:8px;padding:10px 14px;margin:6px 0'>"
+                    f"<span style='font-size:0.8em;color:#aaa'>🎟️ Euer erster gemeinsamer Kinoabend</span><br>"
+                    f"<strong>{_kb_title}</strong> &nbsp;"
+                    f"<span style='color:#aaa;font-size:0.85em'>Du: {_kb_me} · {person['name']}: {_kb_them}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            # Unseen Gem
+            if person.get('unseen_gem'):
+                _ug_title  = str(person['unseen_gem'][0]).title()
+                _ug_rating = f"{float(person['unseen_gem'][1]):.0f}"
+                st.markdown(
+                    f"<div style='background:#2a1a3a;border-radius:8px;padding:10px 14px;margin:6px 0'>"
+                    f"<span style='font-size:0.8em;color:#aaa'>💎 {person['name']}s Hidden Gem für dich</span><br>"
+                    f"<strong>{_ug_title}</strong> &nbsp;"
+                    f"<span style='color:#aaa;font-size:0.85em'>{person['name']}: {_ug_rating} · noch nicht von dir bewertet</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            # Genre-Overlap
+            if person.get('top_genres'):
+                _genres_str = ' · '.join(g for g, _ in person['top_genres'])
+                st.markdown(
+                    f"<div style='margin:6px 0'>"
+                    f"<span style='font-size:0.8em;color:#aaa'>🎭 Eure Genre-Schnittmenge</span><br>"
+                    f"<strong>{_genres_str}</strong>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            # Jahrzehnt-Kompatibilität
+            if person.get('decade_compat'):
+                _dec_rows = [(d, str(n) + ' Filme', f'Ø Diff {diff:.1f}')
+                             for d, n, diff in person['decade_compat']]
+                _dec_df = pd.DataFrame(_dec_rows, columns=['Dekade', 'Gemeinsam', 'Differenz'])
+                st.markdown('<span style="font-size:0.8em;color:#aaa">📅 Jahrzehnt-Kompatibilität</span>',
+                            unsafe_allow_html=True)
+                st.dataframe(_dec_df, width='stretch', hide_index=True)
 
         if buddy:
             with _bcol:
@@ -550,7 +598,16 @@ with col_right:
     # Radar Chart
     st.divider()
     radar_path = '/tmp/radar_tmp.png'
-    save_radar_chart(display_name, dims, radar_path)
+    _buddy_raw  = None
+    _buddy_name = None
+    _fb_match   = st.session_state.get('fb_match')
+    if _fb_match and _fb_match.get('buddy'):
+        _bd = _fb_match['buddy']
+        if _bd.get('buddy_dims_raw'):
+            _buddy_raw  = _bd['buddy_dims_raw']
+            _buddy_name = _bd['name']
+    save_radar_chart(display_name, dims, radar_path,
+                     buddy_name=_buddy_name, buddy_dims_raw=_buddy_raw)
     st.image(radar_path, width='stretch')
 
 # ── LINKS: Persönlichkeitsprofil mit Dimension-Charts ────────────

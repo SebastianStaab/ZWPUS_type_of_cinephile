@@ -41,3 +41,7 @@ CREATE POLICY "public_all_ach"     ON fb_achievements  FOR ALL USING (true) WITH
 
 -- Index für schnelle User-ID-Lookups in Ratings
 CREATE INDEX IF NOT EXISTS idx_ratings_user ON fb_ratings(user_id);
+
+-- Dimension-Scores für Radar-Overlay (als JSON-String gespeichert)
+-- Einmalig ausführen wenn Tabelle schon existiert:
+ALTER TABLE fb_users ADD COLUMN IF NOT EXISTS dimensions_json TEXT;

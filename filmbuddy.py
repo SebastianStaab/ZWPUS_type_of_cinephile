@@ -44,7 +44,7 @@ def is_available() -> bool:
 
 # ── Speichern ─────────────────────────────────────────────────────
 
-def save_user_data(display_name: str, df: pd.DataFrame, achievements: list) -> Optional[str]:
+def save_user_data(display_name: str, df: pd.DataFrame, achievements: list, dims: dict | None = None) -> Optional[str]:
     """
     Speichert / aktualisiert Nutzerratings und Achievements in Supabase.
     Gibt user_id (UUID-String) zurück oder None bei Fehler.
@@ -60,12 +60,18 @@ def save_user_data(display_name: str, df: pd.DataFrame, achievements: list) -> O
         now = datetime.now(timezone.utc).isoformat()
 
         # Nutzer anlegen oder aktualisieren (upsert auf display_name)
+        import json as _json
+        _upsert = {
+            'display_name': display_name.strip(),
+            'film_count':   int(len(df)),
+            'last_upload':  now,
+        }
+        if dims:
+            _upsert['dimensions_json'] = _json.dumps(
+                {k: round(float(v['score']), 4) for k, v in dims.items() if 'score' in v}
+            )
         result = client.table('fb_users').upsert(
-            {
-                'display_name': display_name.strip(),
-                'film_count':   int(len(df)),
-                'last_upload':  now,
-            },
+            _upsert,
             on_conflict='display_name'
         ).execute()
         user_id = result.data[0]['id']
@@ -157,15 +163,31 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                     my_ratings[key2] = rating
         my_keys = set(my_ratings)
 
+        # Genre-Lookup: key → [genre, …] (aus user-df, nur IMDB/TMDB-Uploads haben Genres)
+        _genre_lookup: dict[str, list] = {}
+        if 'genres' in df.columns:
+            for _, _gr in df.dropna(subset=['title_norm']).iterrows():
+                _yr  = int(_gr['year']) if pd.notna(_gr.get('year')) else 0
+                _raw = _gr.get('genres', '')
+                if not pd.notna(_raw) or not str(_raw).strip():
+                    continue
+                _gl = [g.strip() for g in str(_raw).split(',') if g.strip()]
+                _genre_lookup[f"{_gr['title_norm']}|{_yr}"] = _gl
+                _alt = _gr.get('title_alt_norm')
+                if pd.notna(_alt) and str(_alt) != str(_gr['title_norm']):
+                    _genre_lookup[f"{_alt}|{_yr}"] = _gl
+
+
         # Alle anderen User laden, dann pro User separate Query
         # (Supabase hat serverseitiges max_rows=1000 pro Request —
         #  ein Query für alle User würde nur die ersten 1000 Zeilen liefern)
-        users_res = client.table('fb_users').select('id, display_name').neq('id', user_id).execute()
+        users_res = client.table('fb_users').select('id, display_name, dimensions_json').neq('id', user_id).execute()
         if not users_res.data:
             return {'buddy': None, 'frenemy': None, 'total_users': 0,
                     'debug_per_user': {}}
 
-        user_names = {u['id']: u['display_name'] for u in users_res.data}
+        user_names     = {u['id']: u['display_name']            for u in users_res.data}
+        user_dims_json = {u['id']: u.get('dimensions_json')     for u in users_res.data}
 
         # Pro User paginierte Queries (PostgREST-Serverlimit = 1000 Zeilen/Request)
         _PAGE = 1000
@@ -199,6 +221,44 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
             if len(common) < 3:
                 continue
 
+            # ── Genre-Overlap ──────────────────────────────────────
+            _gc: dict[str, float] = {}
+            for _k in common:
+                _w = min(my_ratings[_k], their_ratings[_k])
+                for _g in _genre_lookup.get(_k, []):
+                    _gc[_g] = _gc.get(_g, 0.0) + _w
+            top_genres = sorted(_gc.items(), key=lambda x: x[1], reverse=True)[:3]
+
+            # ── Jahrzehnt-Kompatibilität ───────────────────────────
+            _dd: dict[str, dict] = {}
+            for _k in common:
+                try:
+                    _yr = int(_k.split('|')[1])
+                    if 1900 <= _yr <= 2030:
+                        _dec = f"{(_yr // 10) * 10}er"
+                        _d   = abs(my_ratings[_k] - their_ratings[_k])
+                        if _dec not in _dd:
+                            _dd[_dec] = {'n': 0, 'diff': 0.0}
+                        _dd[_dec]['n']    += 1
+                        _dd[_dec]['diff'] += _d
+                except Exception:
+                    pass
+            decade_compat = sorted(
+                [(_dec, _v['n'], round(_v['diff'] / _v['n'], 1))
+                 for _dec, _v in _dd.items() if _v['n'] >= 2],
+                key=lambda x: x[1], reverse=True
+            )[:3]
+
+            # ── Unseen Gem ─────────────────────────────────────────
+            # Bester Film des Buddys den der User noch nicht bewertet hat
+            _unseen = sorted(
+                [(k.split('|')[0], their_ratings[k])
+                 for k in their_ratings
+                 if k not in my_keys and their_ratings[k] >= 8.0],
+                key=lambda x: x[1], reverse=True
+            )
+            unseen_gem = _unseen[0] if _unseen else None
+
             mine   = np.array([my_ratings[k]    for k in common])
             theirs = np.array([their_ratings[k] for k in common])
 
@@ -216,7 +276,7 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                                 key=lambda k: min(my_ratings[k], their_ratings[k]),
                                 reverse=True)
                 if my_ratings[k] >= 7 and their_ratings[k] >= 7
-            ][:5]
+            ][:3]
 
             # Größte Abweichungen
             top_diff = [
@@ -224,7 +284,7 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                 for k in sorted(common,
                                 key=lambda k: abs(my_ratings[k] - their_ratings[k]),
                                 reverse=True)
-            ][:5]
+            ][:3]
 
             # Deal Breaker: Differenz ≥ 5 Punkte
             dealbreaker = [
@@ -233,7 +293,7 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                                 key=lambda k: abs(my_ratings[k] - their_ratings[k]),
                                 reverse=True)
                 if abs(my_ratings[k] - their_ratings[k]) >= 5
-            ][:5]
+            ][:3]
 
             # Rating-Pairs für Scatter-Vergleich (max 300)
             _common_list = list(common)
@@ -242,14 +302,21 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                 for k in _common_list[:300]
             ]
 
+            import json as _json
+            _raw_dj = user_dims_json.get(uid)
             results.append({
-                'name':         user_names.get(uid, '???'),
-                'corr':         round(corr, 3),
-                'n':            len(common),
-                'top_agree':    top_agree,
-                'top_diff':     top_diff,
-                'dealbreaker':  dealbreaker,
-                'rating_pairs': rating_pairs,
+                'name':            user_names.get(uid, '???'),
+                'corr':            round(corr, 3),
+                'n':               len(common),
+                'top_agree':       top_agree,
+                'top_diff':        top_diff,
+                'dealbreaker':     dealbreaker,
+                'rating_pairs':    rating_pairs,
+                'buddy_dims_raw':  _json.loads(_raw_dj) if _raw_dj else None,
+                'top_genres':      top_genres,
+                'decade_compat':   decade_compat,
+                'kinoabend':       top_agree[0] if top_agree else None,
+                'unseen_gem':      unseen_gem,
             })
 
         if not results:
