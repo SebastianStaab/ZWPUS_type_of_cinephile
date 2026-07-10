@@ -80,8 +80,7 @@ st.set_page_config(
 
 # ── Sidebar ───────────────────────────────────────────────────────
 with st.sidebar:
-    st.image('https://img.shields.io/badge/Zwei%20wie%20Pech%20%26%20Schwafel-%F0%9F%8E%AC-red',
-             use_container_width=True)
+    st.image('https://img.shields.io/badge/Zwei%20wie%20Pech%20%26%20Schwafel-%F0%9F%8E%AC-red', width='stretch')
     st.title('🎬 Film Personality')
     st.caption('Powered by Letterboxd + IMDB + TMDB')
     st.divider()
@@ -386,7 +385,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             if not _clean:
                 return
             _df_t = pd.DataFrame(_clean, columns=['Film', col_me, col_them])
-            st.dataframe(_df_t, use_container_width=True, hide_index=True)
+            st.dataframe(_df_t, width='stretch', hide_index=True)
 
         def _scatter_chart(pairs, name_a, name_b):
             """Scatter-Plot: x = eigene Ratings, y = Ratings der anderen Person."""
@@ -407,7 +406,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
                 spine.set_edgecolor('#444')
             _ax.set_title(f'{name_a} vs. {name_b}', color='white', fontsize=10)
             plt.tight_layout()
-            st.pyplot(_fig, use_container_width=True)
+            st.pyplot(_fig, width='stretch')
             plt.close(_fig)
 
         def _render_person(person, bg, emoji, label, show_agree=True):
@@ -558,13 +557,13 @@ with col_right:
         if birth_year:
             _form_chart = '/tmp/formative_chart.png'
             save_formative_years_chart(df, birth_year, _form_chart)
-            st.image(_form_chart, use_container_width=True)
+            st.image(_form_chart, width='stretch')
 
     # Radar Chart
     st.divider()
     radar_path = '/tmp/radar_tmp.png'
     save_radar_chart(display_name, dims, radar_path)
-    st.image(radar_path, use_container_width=True)
+    st.image(radar_path, width='stretch')
 
 # ── LINKS: Persönlichkeitsprofil mit Dimension-Charts ────────────
 with col_left:
@@ -584,7 +583,7 @@ with col_left:
             st.caption(d['desc'])
             _dim_path = f'/tmp/dim_{key}.png'
             save_single_dimension_chart(key, df, dims, _dim_path, rating_source=_rating_source)
-            st.image(_dim_path, use_container_width=True)
+            st.image(_dim_path, width='stretch')
 
 # ── Genre-Tabelle ─────────────────────────────────────────────────
 if 'genre_all' in topflop and not topflop['genre_all'].empty:
@@ -610,8 +609,7 @@ if 'genre_all' in topflop and not topflop['genre_all'].empty:
         return ''
 
     st.dataframe(
-        genre_df.style.map(color_adj, subset=['Adj. ▲▼']).format(precision=2),
-        use_container_width=True,
+        genre_df.style.map(color_adj, subset=['Adj. ▲▼']).format(precision=2), width='stretch',
     )
 
 # ── Regisseure ────────────────────────────────────────────────────
@@ -639,14 +637,14 @@ if 'dir_all' in topflop and not topflop['dir_all'].empty:
             with st.expander(f'{d}  —  Ø {row["user_avg"]:.1f}  ({int(row["n"])} Filme)'):
                 _films = _dir_films(d)
                 if not _films.empty:
-                    st.dataframe(_films.style.format(precision=1), use_container_width=True, hide_index=True)
+                    st.dataframe(_films.style.format(precision=1), width='stretch', hide_index=True)
     with dcol2:
         st.markdown('**Flop 3**')
         for d, row in topflop['dir_flop'].head(3).iterrows():
             with st.expander(f'{d}  —  Ø {row["user_avg"]:.1f}  ({int(row["n"])} Filme)'):
                 _films = _dir_films(d)
                 if not _films.empty:
-                    st.dataframe(_films.style.format(precision=1), use_container_width=True, hide_index=True)
+                    st.dataframe(_films.style.format(precision=1), width='stretch', hide_index=True)
 
 # ── Größte Abweichungen ───────────────────────────────────────────
 st.divider()
@@ -722,12 +720,10 @@ if _has_imdb_dev or _has_david or _has_robert:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown('**⬆️ Du liebst, was andere nicht mögen**')
-                st.dataframe(_style_diff(_clean_dev_df(_top_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]), 'IMDB'),
-                             use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_top_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]), 'IMDB'), width='stretch', hide_index=True)
             with c2:
                 st.markdown('**⬇️ Du magst nicht, was andere feiern**')
-                st.dataframe(_style_diff(_clean_dev_df(_bottom_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]), 'IMDB'),
-                             use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_bottom_imdb[['Titel', 'Jahr', 'Eigene', 'IMDB', 'Diff']]), 'IMDB'), width='stretch', hide_index=True)
 
     def _vs_person(person_df, person_col, tab):
         """Abweichungen vs. David oder Robert (join über title_norm, Ratings auf 1–10)."""
@@ -759,12 +755,10 @@ if _has_imdb_dev or _has_david or _has_robert:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f'**⬆️ Du magst deutlich mehr als {person_col}**')
-                st.dataframe(_style_diff(_clean_dev_df(_top[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]), person_col),
-                             use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_top[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]), person_col), width='stretch', hide_index=True)
             with c2:
                 st.markdown(f'**⬇️ Du magst deutlich weniger als {person_col}**')
-                st.dataframe(_style_diff(_clean_dev_df(_bottom[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]), person_col),
-                             use_container_width=True, hide_index=True)
+                st.dataframe(_style_diff(_clean_dev_df(_bottom[['Titel', 'Jahr', 'Eigene', person_col, 'Diff']]), person_col), width='stretch', hide_index=True)
 
     if _has_david:
         _vs_person(david_df, 'David', _dev_tabs[_tab_idx])
@@ -789,8 +783,8 @@ if _is_lb and api_key:
             _missing = df_raw[df_raw['tmdb_rating'].isna()][['title', 'year']].copy()
             if not _missing.empty:
                 st.markdown(f'**Nicht gefunden auf TMDB ({len(_missing)}):**')
-                st.dataframe(_missing.reset_index(drop=True), use_container_width=True, hide_index=True)
-        st.dataframe(df_raw[_dcols].head(), use_container_width=True, hide_index=True)
+                st.dataframe(_missing.reset_index(drop=True), width='stretch', hide_index=True)
+        st.dataframe(df_raw[_dcols].head(), width='stretch', hide_index=True)
 
 # ── Footer ────────────────────────────────────────────────────────
 st.divider()
