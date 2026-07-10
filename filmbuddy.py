@@ -315,6 +315,43 @@ def seed_initial_users(david_path: str, robert_path: str) -> str:
     return '\n'.join(messages)
 
 
+# ── Buddy ohne CSV-Upload ─────────────────────────────────────────
+
+def find_buddy_by_name(display_name: str) -> dict:
+    """
+    Berechnet Filmbuddy/Frenemy für einen bereits gespeicherten Nutzer —
+    ohne dass eine CSV hochgeladen werden muss.
+    Gibt dasselbe Format zurück wie find_buddy().
+    """
+    client = _get_client()
+    if client is None:
+        return {}
+    try:
+        # User-ID anhand des Namens
+        res = client.table('fb_users').select('id').eq('display_name', display_name.strip()).execute()
+        if not res.data:
+            return {'error': 'Kein Nutzer mit diesem Namen gefunden.'}
+        user_id = res.data[0]['id']
+
+        # Eigene Ratings aus DB laden
+        my_res = (
+            client.table('fb_ratings')
+            .select('title_norm, year, user_rating')
+            .eq('user_id', user_id)
+            .limit(100_000)
+            .execute()
+        )
+        if not my_res.data:
+            return {'error': 'Keine gespeicherten Ratings gefunden.'}
+
+        df_my = pd.DataFrame(my_res.data)
+        return find_buddy(user_id, df_my.rename(columns={'user_rating': 'user_rating'}))
+
+    except Exception as e:
+        print(f'  Filmbuddy find_buddy_by_name FEHLER: {e}')
+        return {}
+
+
 # ── Community-Stats ───────────────────────────────────────────────
 
 def get_community_stats() -> dict:

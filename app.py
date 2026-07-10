@@ -77,12 +77,6 @@ st.set_page_config(
     layout='wide',
 )
 
-# ── TMDB-Key aus Streamlit-Secrets oder Eingabe ───────────────────
-def get_api_key():
-    try:
-        return st.secrets['TMDB_API_KEY']
-    except Exception:
-        return st.session_state.get('tmdb_key', '')
 
 # ── Sidebar ───────────────────────────────────────────────────────
 with st.sidebar:
@@ -99,31 +93,19 @@ with st.sidebar:
 
     # ── Filmbuddy-Speichern-Button ────────────────────────────────
     if _fb.is_available():
-        _fb_btn_disabled = not (name.strip() and st.session_state.get('has_upload', False))
+        _fb_btn_disabled = not (name.strip() and st.session_state.get('main_upload') is not None)
         if st.button('💾 Im Filmbuddy-Pool speichern', disabled=_fb_btn_disabled, key='sb_fb_save'):
             st.session_state['fb_save_triggered'] = True
         if not name.strip():
             st.caption('← Name eingeben um zu speichern')
-        elif _fb_btn_disabled:
+        elif st.session_state.get('main_upload') is None:
             st.caption('← CSV hochladen um zu speichern')
 
     st.divider()
 
-    try:
-        _key_from_secrets = st.secrets['TMDB_API_KEY']
-        st.session_state['tmdb_key'] = _key_from_secrets
-        st.caption('✅ TMDB API-Key konfiguriert')
-    except Exception:
-        api_key_input = st.text_input('TMDB API-Key', type='password',
-                                       help='Kostenlos auf themoviedb.org registrieren')
-        if api_key_input:
-            st.session_state['tmdb_key'] = api_key_input
+    # ── Info-Block: Cache + Pool (kompakt zusammen) ───────────────
+    _cache_status = st.empty()   # wird von _update_cache_status befüllt
 
-    st.divider()
-    # Cache-Status — Placeholder, wird auch während Enrichment aktualisiert
-    _cache_status = st.empty()
-
-    # ── Filmbuddy Community-Info ──────────────────────────────────
     if _fb.is_available():
         _sidebar_stats = _fb.get_community_stats()
         if _sidebar_stats and _sidebar_stats.get('total_users', 0) > 0:
@@ -166,11 +148,11 @@ def _update_cache_status(done=None, total=None):
 
 _update_cache_status()
 
-# ── API-Key + Cache-Pfad (früh, damit Warming vor st.stop() starten kann) ──
+# ── API-Key aus Secrets (kein manuelles Eingabefeld mehr) ────────
 try:
     api_key = (st.secrets['TMDB_API_KEY'] or '').strip()
 except Exception:
-    api_key = st.session_state.get('tmdb_key', '')
+    api_key = ''
 
 _app_dir   = os.path.dirname(os.path.abspath(__file__))
 _cache_app = os.path.join(_app_dir, 'tmdb_cache.json')
@@ -194,11 +176,11 @@ st.subheader('Dein Film-Persönlichkeitstest')
 uploaded = st.file_uploader(
     'Ratings-CSV hochladen (Letterboxd oder IMDB Export)',
     type=['csv'],
+    key='main_upload',
     help='Letterboxd: Einstellungen → Daten → Export | IMDB: imdb.com → Deine Ratings → Export'
 )
 
 if not uploaded:
-    st.session_state.pop('has_upload', None)
     st.session_state.pop('fb_match',   None)
     st.session_state.pop('fb_save_ok', None)
     st.info('⬆️ Lade deine Ratings-CSV hoch um loszulegen.')
@@ -211,6 +193,24 @@ if not uploaded:
             '1. imdb.com → Profil-Icon → **Your ratings** → `...` → **Export**\n'
             '2. CSV direkt hochladen — Genres und Regisseure sind bereits enthalten\n'
         )
+
+    # ── Filmbuddy ohne Upload checken ─────────────────────────────
+    if _fb.is_available():
+        st.divider()
+        st.subheader('🔄 Filmbuddy neu berechnen')
+        st.caption('Schon gespeichert? Ergebnisse gegen aktuelle Datenbank checken — ohne CSV-Upload.')
+        _chk_name = st.text_input('Dein Name', key='fb_check_name',
+                                   placeholder='Exakt so wie beim Speichern')
+        if st.button('Buddy & Frenemy laden', disabled=not (_chk_name or '').strip()):
+            with st.spinner('Berechne…'):
+                _chk_match = _fb.find_buddy_by_name(_chk_name.strip())
+            if 'error' in _chk_match:
+                st.error(_chk_match['error'])
+            else:
+                st.session_state['fb_match'] = _chk_match
+                st.session_state['fb_check_result'] = True
+                st.rerun()
+
     st.stop()
 
 # ── Daten laden ───────────────────────────────────────────────────
@@ -303,8 +303,6 @@ if _is_lb and _no_imdb:
         )
 
 
-# Datei erfolgreich geladen → Sidebar-Button freischalten
-st.session_state['has_upload'] = True
 
 # ── Profil berechnen ──────────────────────────────────────────────
 # Datenquelle bestimmen: LB-Upload → TMDB-angereichert, IMDB-Upload → IMDB-Daten
@@ -370,10 +368,15 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
         def _render_table(rows, col_me, col_them):
             if not rows:
                 return
-            _df_t = pd.DataFrame(rows, columns=['Film', col_me, col_them])
-            _df_t['Film'] = _df_t['Film'].str.title()
-            _df_t[col_me]   = _df_t[col_me].apply(lambda x: f'{x:.0f}')
-            _df_t[col_them] = _df_t[col_them].apply(lambda x: f'{x:.0f}')
+            _clean = []
+            for r in rows:
+                if isinstance(r, (list, tuple)) and len(r) >= 3:
+                    _clean.append((str(r[0]).title(), f'{float(r[1]):.0f}', f'{float(r[2]):.0f}'))
+                elif isinstance(r, str):
+                    _clean.append((r.title(), '—', '—'))
+            if not _clean:
+                return
+            _df_t = pd.DataFrame(_clean, columns=['Film', col_me, col_them])
             st.dataframe(_df_t, use_container_width=True, hide_index=True)
 
         def _scatter_chart(pairs, name_a, name_b):
