@@ -358,24 +358,27 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             _df_t = pd.DataFrame(_clean, columns=['Film', col_me, col_them])
             st.dataframe(_df_t, width='stretch', hide_index=True)
 
-        def _scatter_chart(pairs, name_a, name_b):
-            """Scatter-Plot: x = eigene Ratings, y = Ratings der anderen Person."""
-            if not pairs:
+        def _rating_histogram(my_ratings_all, buddy_ratings_all, buddy_name):
+            """Verteilung: Wie streng bewertet ihr beide generell?"""
+            if not buddy_ratings_all:
                 return
-            _xs = [p[0] for p in pairs]
-            _ys = [p[1] for p in pairs]
-            _fig, _ax = plt.subplots(figsize=(4, 4))
+            import numpy as np
+            _bins = np.arange(0.5, 11.5, 1)
+            _fig, _ax = plt.subplots(figsize=(5, 2.8))
             _fig.patch.set_facecolor('#0e1117')
             _ax.set_facecolor('#0e1117')
-            _ax.scatter(_xs, _ys, alpha=0.35, s=18, color='#4fc3f7')
-            _ax.plot([1, 10], [1, 10], '--', color='#888', linewidth=0.8, label='Perfekte Übereinstimmung')
-            _ax.set_xlabel(f'Du', color='white', fontsize=9)
-            _ax.set_ylabel(name_b, color='white', fontsize=9)
-            _ax.set_xlim(0.5, 10.5); _ax.set_ylim(0.5, 10.5)
+            _ax.hist(my_ratings_all, bins=_bins, alpha=0.65, color='#e84545',
+                     label='Du', density=True)
+            _ax.hist(buddy_ratings_all, bins=_bins, alpha=0.55, color='#4fc3f7',
+                     label=buddy_name, density=True)
+            _ax.set_xlabel('Bewertung', color='white', fontsize=9)
+            _ax.set_ylabel('Anteil', color='white', fontsize=9)
+            _ax.set_xlim(0.5, 10.5)
             _ax.tick_params(colors='white', labelsize=8)
             for spine in _ax.spines.values():
-                spine.set_edgecolor('#444')
-            _ax.set_title(f'{name_a} vs. {name_b}', color='white', fontsize=10)
+                spine.set_edgecolor('#333')
+            _ax.legend(fontsize=8, framealpha=0.3, labelcolor='white', facecolor='#222')
+            _ax.set_title('Bewertungsstil', color='white', fontsize=9)
             plt.tight_layout()
             st.pyplot(_fig, width='stretch')
             plt.close(_fig)
@@ -394,9 +397,9 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
                        help='(Pearson r + 1) / 2 × 100 — 100% = identischer Geschmack')
             _m2.metric('Gemeinsame Filme', person['n'])
 
-            # Scatter
-            if person.get('rating_pairs'):
-                _scatter_chart(person['rating_pairs'], display_name, person['name'])
+            # Bewertungsverteilung
+            _my_all = df['user_rating'].dropna().tolist()
+            _rating_histogram(_my_all, person.get('buddy_all_ratings', []), person['name'])
 
             # Deal Breaker
             if person.get('dealbreaker'):
@@ -452,14 +455,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
                     unsafe_allow_html=True
                 )
 
-            # Jahrzehnt-Kompatibilität
-            if person.get('decade_compat'):
-                _dec_rows = [(d, str(n) + ' Filme', f'Ø Diff {diff:.1f}')
-                             for d, n, diff in person['decade_compat']]
-                _dec_df = pd.DataFrame(_dec_rows, columns=['Dekade', 'Gemeinsam', 'Differenz'])
-                st.markdown('<span style="font-size:0.8em;color:#aaa">📅 Jahrzehnt-Kompatibilität</span>',
-                            unsafe_allow_html=True)
-                st.dataframe(_dec_df, width='stretch', hide_index=True)
+
 
         if buddy:
             with _bcol:

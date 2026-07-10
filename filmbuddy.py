@@ -238,26 +238,6 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                     _gc[_g] = _gc.get(_g, 0.0) + _w
             top_genres = sorted(_gc.items(), key=lambda x: x[1], reverse=True)[:3]
 
-            # ── Jahrzehnt-Kompatibilität ───────────────────────────
-            _dd: dict[str, dict] = {}
-            for _k in common:
-                try:
-                    _yr = int(_k.split('|')[1])
-                    if 1900 <= _yr <= 2030:
-                        _dec = f"{(_yr // 10) * 10}er"
-                        _d   = abs(my_ratings[_k] - their_ratings[_k])
-                        if _dec not in _dd:
-                            _dd[_dec] = {'n': 0, 'diff': 0.0}
-                        _dd[_dec]['n']    += 1
-                        _dd[_dec]['diff'] += _d
-                except Exception:
-                    pass
-            decade_compat = sorted(
-                [(_dec, _v['n'], round(_v['diff'] / _v['n'], 1))
-                 for _dec, _v in _dd.items() if _v['n'] >= 2],
-                key=lambda x: x[1], reverse=True
-            )[:3]
-
             # ── Unseen Gem ─────────────────────────────────────────
             # Bester Film des Buddys den der User noch nicht bewertet hat
             _unseen = sorted(
@@ -304,12 +284,8 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                 if abs(my_ratings[k] - their_ratings[k]) >= 5
             ][:3]
 
-            # Rating-Pairs für Scatter-Vergleich (max 300)
-            _common_list = list(common)
-            rating_pairs = [
-                (my_ratings[k], their_ratings[k])
-                for k in _common_list[:300]
-            ]
+            # Alle Buddy-Ratings für Verteilungs-Histogram
+            buddy_all_ratings = list(their_ratings.values())
 
             import json as _json
             _raw_dj = user_dims_json.get(uid)
@@ -318,14 +294,13 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                 'corr':            round(corr, 3),
                 'n':               len(common),
                 'top_agree':       top_agree,
-                'top_diff':        top_diff,
-                'dealbreaker':     dealbreaker,
-                'rating_pairs':    rating_pairs,
-                'buddy_dims_raw':  _json.loads(_raw_dj) if _raw_dj else None,
-                'top_genres':      top_genres,
-                'decade_compat':   decade_compat,
-                'kinoabend':       top_agree[0] if top_agree else None,
-                'unseen_gem':      unseen_gem,
+                'top_diff':           top_diff,
+                'dealbreaker':        dealbreaker,
+                'buddy_all_ratings':  buddy_all_ratings,
+                'buddy_dims_raw':     _json.loads(_raw_dj) if _raw_dj else None,
+                'top_genres':         top_genres,
+                'kinoabend':          top_agree[0] if top_agree else None,
+                'unseen_gem':         unseen_gem,
             })
 
         if not results:
