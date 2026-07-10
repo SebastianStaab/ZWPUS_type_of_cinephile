@@ -277,9 +277,14 @@ def seed_initial_users(david_path: str, robert_path: str) -> str:
     if client is None:
         return '❌ Supabase nicht verbunden.'
 
+    # Gleiche Normalisierung wie normalize_title in film_personality.py
+    # (NFKD-Decomposition → ASCII → a-z0-9) damit Supabase-Keys mit
+    # dem Upload von Nutzern übereinstimmen
+    import unicodedata as _ud
     def _norm(t):
-        t = str(t).lower()
-        t = re.sub(r'[^a-z0-9 ]', '', t)
+        t = _ud.normalize('NFKD', str(t))
+        t = t.encode('ascii', 'ignore').decode()
+        t = re.sub(r'[^a-z0-9 ]', '', t.lower())
         return re.sub(r'\s+', ' ', t).strip()
 
     messages = []
