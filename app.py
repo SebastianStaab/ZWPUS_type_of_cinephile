@@ -116,15 +116,18 @@ with st.sidebar:
             )
         else:
             st.caption('🤝 **Filmbuddy-Pool:** noch leer')
-            if st.button('🌱 David & Robert eintragen', key='sb_seed_btn'):
-                _seed_dir = os.path.dirname(os.path.abspath(__file__))
-                with st.spinner('Seed läuft...'):
-                    _seed_msg = _fb.seed_initial_users(
-                        os.path.join(_seed_dir, 'david_ratings.csv'),
-                        os.path.join(_seed_dir, 'robert_ratings.csv'),
-                    )
-                st.text(_seed_msg)
-                st.rerun()
+        # Seed-Button immer anzeigen (wird für Re-Seed nach Normalisierungs-Updates gebraucht)
+        if st.button('🌱 David & Robert (neu) eintragen', key='sb_seed_btn'):
+            _seed_dir = os.path.dirname(os.path.abspath(__file__))
+            with st.spinner('Seed läuft...'):
+                _seed_msg = _fb.seed_initial_users(
+                    os.path.join(_seed_dir, 'david_ratings.csv'),
+                    os.path.join(_seed_dir, 'robert_ratings.csv'),
+                )
+            st.session_state['seed_msg'] = _seed_msg
+            st.rerun()
+        if st.session_state.get('seed_msg'):
+            st.caption(st.session_state.pop('seed_msg'))
 
 def _update_cache_status(done=None, total=None):
     """Zeigt Enrichment-Fortschritt oder Cache-Größe im Sidebar."""
