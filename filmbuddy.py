@@ -157,26 +157,37 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                     my_ratings[key2] = rating
         my_keys = set(my_ratings)
 
-        # Alle anderen User + ihre Ratings — 2 Queries statt N
+        # Alle anderen User laden, dann pro User separate Query
+        # (Supabase hat serverseitiges max_rows=1000 pro Request —
+        #  ein Query für alle User würde nur die ersten 1000 Zeilen liefern)
         users_res = client.table('fb_users').select('id, display_name').neq('id', user_id).execute()
         if not users_res.data:
-            return {'buddy': None, 'frenemy': None, 'total_users': 0}
+            return {'buddy': None, 'frenemy': None, 'total_users': 0,
+                    'debug_per_user': {}}
 
         user_names = {u['id']: u['display_name'] for u in users_res.data}
 
-        all_ratings_res = (
-            client.table('fb_ratings')
-            .select('user_id, title_norm, year, user_rating')
-            .neq('user_id', user_id)
-            .limit(100_000)   # Supabase-Default ist 1000 — explizit erhöhen
-            .execute()
-        )
-
-        # Gruppieren: other_user_id → {key: rating}
-        other: dict[str, dict[str, float]] = defaultdict(dict)
-        for r in all_ratings_res.data:
-            key = f"{r['title_norm']}|{r['year']}"
-            other[r['user_id']][key] = float(r['user_rating'])
+        # Pro User paginierte Queries (PostgREST-Serverlimit = 1000 Zeilen/Request)
+        _PAGE = 1000
+        other: dict[str, dict[str, float]] = {}
+        for u in users_res.data:
+            uid_other = u['id']
+            ratings: dict[str, float] = {}
+            offset = 0
+            while True:
+                page = (
+                    client.table('fb_ratings')
+                    .select('title_norm, year, user_rating')
+                    .eq('user_id', uid_other)
+                    .range(offset, offset + _PAGE - 1)
+                    .execute()
+                )
+                for r in page.data:
+                    ratings[f"{r['title_norm']}|{r['year']}"] = float(r['user_rating'])
+                if len(page.data) < _PAGE:
+                    break   # letzte Seite erreicht
+                offset += _PAGE
+            other[uid_other] = ratings
 
         # Korrelation für jeden anderen User berechnen
         results = []

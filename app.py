@@ -344,15 +344,23 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
     _fb_hcol.subheader('🤝 Filmbuddy')
     if st.session_state.get('fb_save_ok'):
         st.success(f"✅ {st.session_state.pop('fb_save_ok')} Ratings gespeichert!")
-    # Re-Calculate Button
+    # Re-Calculate Button — matcht neu ohne erneutes Speichern
     if _fb_bcol.button('🔄 Neu berechnen', key='fb_recalc',
                         help='Erneut matchen — sinnvoll wenn neue Nutzer dazugekommen sind'):
-        if name.strip():
+        _existing_uid = st.session_state.get('fb_user_id')
+        if _existing_uid:
             with st.spinner('Suche Filmbuddy & Frenemy…'):
+                st.session_state['fb_match'] = _fb.find_buddy(_existing_uid, df)
+            st.rerun()
+        elif name.strip():
+            with st.spinner('Speichere & matche…'):
                 _recalc_uid = _fb.save_user_data(name.strip(), df,
                                                   bonus + genre_ach + insider + progressive)
                 if _recalc_uid:
+                    st.session_state['fb_user_id'] = _recalc_uid
                     st.session_state['fb_match'] = _fb.find_buddy(_recalc_uid, df)
+                else:
+                    st.error('Speichern fehlgeschlagen.')
             st.rerun()
 
     _match = st.session_state['fb_match']
