@@ -74,18 +74,24 @@ def save_user_data(display_name: str, df: pd.DataFrame, achievements: list) -> O
         # Altes löschen, komplett neu schreiben (sauberster Re-Upload)
         client.table('fb_ratings').delete().eq('user_id', user_id).execute()
 
+        seen_keys: set[tuple] = set()
         rows = []
         for _, row in df[['title_norm', 'year', 'user_rating']].iterrows():
             if pd.isna(row['user_rating']):
                 continue
+            yr = int(row['year']) if pd.notna(row.get('year')) else 0
+            key = (str(row['title_norm']), yr)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             rows.append({
-                'user_id':    user_id,
-                'title_norm': str(row['title_norm']),
-                'year':       int(row['year']) if pd.notna(row.get('year')) else 0,
+                'user_id':     user_id,
+                'title_norm':  str(row['title_norm']),
+                'year':        yr,
                 'user_rating': round(float(row['user_rating']), 2),
             })
 
-        # Batch-Insert à 500 (Supabase-Limit)
+        # Batch-Insert a 500 (Supabase-Limit)
         for i in range(0, len(rows), 500):
             client.table('fb_ratings').insert(rows[i:i + 500]).execute()
 
@@ -307,16 +313,21 @@ def seed_initial_users(david_path: str, robert_path: str) -> str:
             # Alte Ratings löschen, neu schreiben
             client.table('fb_ratings').delete().eq('user_id', uid).execute()
 
-            rows = [
-                {
+            seen: set[tuple] = set()
+            rows = []
+            for _, row in df.iterrows():
+                if row['user_rating'] < 1:
+                    continue
+                key = (row['title_norm'], int(row['year']))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append({
                     'user_id':     uid,
                     'title_norm':  row['title_norm'],
                     'year':        int(row['year']),
                     'user_rating': float(row['user_rating']),
-                }
-                for _, row in df.iterrows()
-                if row['user_rating'] >= 1
-            ]
+                })
             for i in range(0, len(rows), 500):
                 client.table('fb_ratings').insert(rows[i:i + 500]).execute()
 
