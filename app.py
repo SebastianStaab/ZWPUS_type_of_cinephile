@@ -196,23 +196,6 @@ if not uploaded:
             '2. CSV direkt hochladen — Genres und Regisseure sind bereits enthalten\n'
         )
 
-    # ── Filmbuddy ohne Upload checken ─────────────────────────────
-    if _fb.is_available():
-        st.divider()
-        st.subheader('🔄 Filmbuddy neu berechnen')
-        st.caption('Schon gespeichert? Ergebnisse gegen aktuelle Datenbank checken — ohne CSV-Upload.')
-        _chk_name = st.text_input('Dein Name', key='fb_check_name',
-                                   placeholder='Exakt so wie beim Speichern')
-        if st.button('Buddy & Frenemy laden', disabled=not (_chk_name or '').strip()):
-            with st.spinner('Berechne…'):
-                _chk_match = _fb.find_buddy_by_name(_chk_name.strip())
-            if 'error' in _chk_match:
-                st.error(_chk_match['error'])
-            else:
-                st.session_state['fb_match'] = _chk_match
-                st.session_state['fb_check_result'] = True
-                st.rerun()
-
     st.stop()
 
 # ── Daten laden ───────────────────────────────────────────────────

@@ -61,19 +61,28 @@ def save_user_data(display_name: str, df: pd.DataFrame, achievements: list, dims
 
         # Nutzer anlegen oder aktualisieren (upsert auf display_name)
         import json as _json
-        _upsert = {
+        _base = {
             'display_name': display_name.strip(),
             'film_count':   int(len(df)),
             'last_upload':  now,
         }
-        if dims:
-            _upsert['dimensions_json'] = _json.dumps(
-                {k: round(float(v['score']), 4) for k, v in dims.items() if 'score' in v}
-            )
-        result = client.table('fb_users').upsert(
-            _upsert,
-            on_conflict='display_name'
-        ).execute()
+        _dims_json = _json.dumps(
+            {k: round(float(v['score']), 4) for k, v in dims.items() if 'score' in v}
+        ) if dims else None
+
+        # Versuche erst mit dimensions_json (Spalte muss existieren).
+        # Falls die Spalte fehlt, falle auf base-Upsert zurück.
+        try:
+            _upsert = dict(_base)
+            if _dims_json:
+                _upsert['dimensions_json'] = _dims_json
+            result = client.table('fb_users').upsert(
+                _upsert, on_conflict='display_name'
+            ).execute()
+        except Exception:
+            result = client.table('fb_users').upsert(
+                _base, on_conflict='display_name'
+            ).execute()
         user_id = result.data[0]['id']
 
         # ── Ratings ───────────────────────────────────────────────
