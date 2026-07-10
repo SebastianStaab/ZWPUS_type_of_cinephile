@@ -136,10 +136,19 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
 
     try:
         # Eigene Ratings als Dict: "title_norm|year" → rating
-        my_ratings: dict[str, float] = {
-            f"{row['title_norm']}|{int(row['year']) if pd.notna(row.get('year')) else 0}": float(row['user_rating'])
-            for _, row in df[['title_norm', 'year', 'user_rating']].dropna(subset=['user_rating']).iterrows()
-        }
+        # Beide Keys (original_title + localized title) damit LB-Titel matchen
+        my_ratings: dict[str, float] = {}
+        for _, row in df.dropna(subset=['user_rating']).iterrows():
+            year = int(row['year']) if pd.notna(row.get('year')) else 0
+            rating = float(row['user_rating'])
+            key1 = f"{row['title_norm']}|{year}"
+            my_ratings[key1] = rating
+            # Alternativer Key (lokalisierter Titel, z.B. "parasite" für "기생충")
+            alt = row.get('title_alt_norm')
+            if pd.notna(alt) and str(alt) and str(alt) != str(row['title_norm']):
+                key2 = f"{alt}|{year}"
+                if key2 not in my_ratings:
+                    my_ratings[key2] = rating
         my_keys = set(my_ratings)
 
         # Alle anderen User + ihre Ratings — 2 Queries statt N

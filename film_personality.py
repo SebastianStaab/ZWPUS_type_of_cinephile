@@ -18,7 +18,7 @@ Hinweis Letterboxd: Letterboxd-Exporte haben keine Genres/Regisseure.
     Correlation-Dimensionen und Bonus-Achievements funktionieren aber auch mit LB-Export.
 """
 
-import sys, os, math, warnings
+import sys, os, math, warnings, unicodedata
 warnings.filterwarnings('ignore')
 import numpy as np
 import pandas as pd
@@ -174,10 +174,11 @@ def explode_genres(df):
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 def normalize_title(t):
-    """Einfache Titelnormalisierung für Matching."""
+    """Titelnormalisierung für Matching: NFKD-Decomposition → ASCII, dann a-z0-9."""
     import re
-    t = str(t).lower()
-    t = re.sub(r'[^a-z0-9 ]', '', t)
+    t = unicodedata.normalize('NFKD', str(t))
+    t = t.encode('ascii', 'ignore').decode()
+    t = re.sub(r'[^a-z0-9 ]', '', t.lower())
     return re.sub(r'\s+', ' ', t).strip()
 
 # ─────────────────────────────────────────────────────────────────
@@ -215,8 +216,14 @@ def load_imdb_export(path, cache_path=None):
             raw[col] = pd.to_numeric(raw[col], errors='coerce')
 
     # Titel normalisiert für Matching
+    # primary: original_title (für Analyse); alt: title (lokalisiert) für Filmbuddy-Cross-Matching
     title_col = 'original_title' if 'original_title' in raw.columns else 'title'
     raw['title_norm'] = raw[title_col].apply(normalize_title)
+    # Alternativer Key für Filmbuddy: lokalisierter Titel (z.B. "Parasite" statt "기생충")
+    if title_col == 'original_title' and 'title' in raw.columns:
+        raw['title_alt_norm'] = raw['title'].apply(normalize_title)
+    else:
+        raw['title_alt_norm'] = raw['title_norm']
 
     # Nur Filme für die Hauptanalyse
     film_types = {'Film', 'Fernsehfilm', 'movie', 'tvMovie', 'Movie'}
