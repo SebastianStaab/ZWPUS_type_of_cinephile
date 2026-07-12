@@ -35,8 +35,8 @@ DIM_POLAR_THRESHOLD    =  3.0   # MSE(user−IMDB) > X → Polarisierer  (war 5.
 DIM_DIPLO_THRESHOLD    =  1.0   # MSE(user−IMDB) < X → Diplomat     (war 1.5)
 DIM_SPEZIALIST_ENTROPY = 0.76   # normierte Genre-Entropie < X → Spezialist (war 0.70)
 DIM_OMNIVORE_ENTROPY   = 0.93   # normierte Genre-Entropie > X → Omnivore  (war 0.88; braucht sehr gleichm. Verteilung)
-DIM_KLASSIKER_AGE      = 20     # mittleres Filmalter (Jahre) > X → Klassiker (ø vor 2005)
-DIM_ZEITGEIST_AGE      =  7     # mittleres Filmalter (Jahre) < X → Zeitgeist  (ø nach 2018)
+DIM_KLASSIKER_AGE      = 28     # mittleres Filmalter (Jahre) > X → Klassiker (ø vor ~1997)
+DIM_ZEITGEIST_AGE      =  8     # mittleres Filmalter (Jahre) < X → Zeitgeist  (ø nach ~2017)
 
 # Genre-Achievements
 # Trigger: user_avg_genre - user_gesamt_avg > X  (relativ zum eigenen Schnitt,
@@ -1328,8 +1328,8 @@ def save_radar_chart(name, dims, out_path):
             # Legacy: score > 100 → altes Medianjahr-Format (z.B. 2015)
             if score > 100:
                 return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
-            # Neues Format: mean_age in Jahren; 40 Jahre = max Klassiker
-            return max(0.0, min(1.0, score / 40.0))
+            # Neues Format: mean_age in Jahren; 45 Jahre = max Klassiker
+            return max(0.0, min(1.0, score / 45.0))
         elif key == 'publikum':
             # score: Blockbuster-adj − Arthouse-adj
             # Tighter range ±1.0 statt ±2.0 → Unterschiede besser sichtbar
@@ -1527,9 +1527,9 @@ def save_comparison_radar(name, dims, others, out_path):
         elif key == 'geschmacksbreite':
             return max(0.0, min(1.0, score))
         elif key == 'epoche':
-            if score > 2.0:  # Legacy: altes Medianjahr-Format
+            if score > 100:  # Legacy: altes Medianjahr-Format (z.B. 2015)
                 return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
-            return max(0.0, min(1.0, score / 0.45))
+            return max(0.0, min(1.0, score / 45.0))  # mean_age: 0=Zeitgeist, 45=max Klassiker
         elif key == 'publikum':
             return max(0.0, min(1.0, 1.0 - (score + 1.0) / 2.0))
         return 0.5
