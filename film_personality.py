@@ -1293,7 +1293,7 @@ def save_dimension_detail_charts(name, df, dims, out_path):
     print(f'  Detail-Charts gespeichert: {out_path}')
 
 
-def save_radar_chart(name, dims, out_path, buddy_name=None, buddy_dims_raw=None):
+def save_radar_chart(name, dims, out_path):
     """
     Radar-Chart der 4 Persönlichkeitsdimensionen.
     Jede Achse zeigt einen normalisierten Score 0–1, wobei:
@@ -1362,24 +1362,11 @@ def save_radar_chart(name, dims, out_path, buddy_name=None, buddy_dims_raw=None)
         ax.text(angle, 0.08, clabel, ha='center', va='center',
                 fontsize=10, color='grey')
 
-    ax.fill(angles, scores_plot, color='#e84545', alpha=0.25)
-    ax.plot(angles, scores_plot, color='#e84545', lw=2.5, label=name)
-    ax.scatter(angles[:-1], scores, color='#e84545', s=60, zorder=5)
+    ax.fill(angles, scores_plot, color='#4fc3f7', alpha=0.25)
+    ax.plot(angles, scores_plot, color='#4fc3f7', lw=2.5)
+    ax.scatter(angles[:-1], scores, color='#4fc3f7', s=60, zorder=5)
 
-    # Buddy-Overlay (wenn vorhanden)
-    if buddy_dims_raw:
-        _bd = {k: {'score': v} for k, v in buddy_dims_raw.items()}
-        buddy_scores      = [norm_score(k, _bd) for k, _, _ in _dim_cfg]
-        buddy_scores_plot = buddy_scores + [buddy_scores[0]]
-        ax.fill(angles, buddy_scores_plot, color='#4fc3f7', alpha=0.15)
-        ax.plot(angles, buddy_scores_plot, color='#4fc3f7', lw=2.0,
-                linestyle='--', label=buddy_name or 'Buddy')
-        ax.scatter(angles[:-1], buddy_scores, color='#4fc3f7', s=45, zorder=4)
-        ax.legend(loc='upper right', fontsize=8, framealpha=0.3,
-                  labelcolor='white', facecolor='#222')
-
-    _title = f'{name}' + (f' vs. {buddy_name}' if buddy_name else '')
-    ax.set_title(_title, size=12, pad=20, fontweight='bold')
+    ax.set_title(f'Filmpersoenlichkeit: {name}', size=13, pad=20, fontweight='bold')
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -1514,3 +1501,87 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+def save_comparison_radar(name, dims, others, out_path):
+    """Vergleichs-Radar: User (rot) + beliebig viele andere.
+    others: list of (label, dims_raw_dict, color, linestyle)
+    Returns False wenn zu wenige Dims vorhanden."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    def _norm(key, score):
+        if score is None:
+            return None
+        if key == 'bewertungsstil':
+            return max(0.0, min(1.0, (-score + 3) / 6))
+        elif key == 'meinungsstaerke':
+            return max(0.0, min(1.0, score / 9.0))
+        elif key == 'geschmacksbreite':
+            return max(0.0, min(1.0, score))
+        elif key == 'epoche':
+            return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
+        elif key == 'publikum':
+            return max(0.0, min(1.0, 1.0 - (score + 2) / 4))
+        return 0.5
+
+    _all_cfg = [
+        ('bewertungsstil',   'Streng',      'Mild'),
+        ('meinungsstaerke',  'Polarisierer','Diplomat'),
+        ('geschmacksbreite', 'Omnivore',    'Spezialist'),
+        ('epoche',           'Klassiker',   'Zeitgeist'),
+        ('publikum',         'Arthouse',    'Blockbuster'),
+    ]
+    cfg = [(k, lo, hi) for k, lo, hi in _all_cfg if k in dims]
+    if len(cfg) < 3:
+        return False
+
+    def _raw(d, k):
+        v = d.get(k)
+        if v is None:
+            return None
+        return v['score'] if isinstance(v, dict) else v
+
+    n      = len(cfg)
+    angles = [i * 2 * 3.14159265 / n for i in range(n)] + [0]
+
+    fig, ax = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+    fig.patch.set_facecolor('#0e1117')
+    ax.set_facecolor('#111827')
+
+    for r in [0.25, 0.5, 0.75, 1.0]:
+        ax.plot(angles, [r]*(n+1), color='grey', lw=0.4, alpha=0.35)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels([lo for _, lo, _ in cfg], size=9, color='#ccc')
+    ax.set_yticklabels([])
+    ax.set_ylim(0, 1)
+
+    # User
+    my_sc = [_norm(k, _raw(dims, k)) for k, _, _ in cfg]
+    mp    = my_sc + [my_sc[0]]
+    ax.fill(angles, mp, color='#4fc3f7', alpha=0.22)
+    ax.plot(angles, mp, color='#4fc3f7', lw=2.5, label=name)
+    ax.scatter(angles[:-1], my_sc, color='#4fc3f7', s=55, zorder=5)
+
+    # Others (buddy, frenemy, …)
+    for o_label, o_raw, o_color, o_ls in others:
+        o_sc = [_norm(k, o_raw.get(k)) if o_raw else None for k, _, _ in cfg]
+        o_sc = [v if v is not None else 0.5 for v in o_sc]
+        op   = o_sc + [o_sc[0]]
+        ax.fill(angles, op, color=o_color, alpha=0.12)
+        ax.plot(angles, op, color=o_color, lw=2.0, linestyle=o_ls, label=o_label)
+        ax.scatter(angles[:-1], o_sc, color=o_color, s=40, zorder=4)
+
+    ax.legend(loc='upper right', fontsize=8, framealpha=0.25,
+              labelcolor='white', facecolor='#1a1a2e')
+    title = name + ''.join(f'  vs.  {o[0]}' for o in others)
+    ax.set_title(title, size=10, pad=18, fontweight='bold', color='white')
+
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=140, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return True

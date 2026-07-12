@@ -25,7 +25,7 @@ from film_personality import (
     compute_dimensions, compute_bonus_achievements,
     compute_genre_achievements, compute_insider_achievements,
     compute_progressive_achievements, compute_top_flop,
-    save_radar_chart, save_single_dimension_chart,
+    save_radar_chart, save_comparison_radar, save_single_dimension_chart,
     save_formative_years_chart, compute_formative_years_stats,
 )
 import filmbuddy as _fb
@@ -339,6 +339,21 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
         buddy   = _match.get('buddy')
         frenemy = _match.get('frenemy')
         _same   = buddy and frenemy and buddy['name'] == frenemy['name']
+        # Gemeinsamer Radar: Du + Buddy + Frenemy
+        _others_radar = []
+        if buddy:
+            _bd = buddy.get('buddy_dims_raw') or buddy.get('computed_buddy_dims')
+            if _bd:
+                _others_radar.append((buddy['name'], _bd, '#4caf50', '--'))
+        if frenemy and not _same:
+            _fd = frenemy.get('buddy_dims_raw') or frenemy.get('computed_buddy_dims')
+            if _fd:
+                _others_radar.append((frenemy['name'], _fd, '#e84545', ':'))
+        if _others_radar:
+            _tri_path = '/tmp/triple_radar.png'
+            if save_comparison_radar(display_name, dims, _others_radar, _tri_path):
+                st.image(_tri_path, width='stretch')
+
         _bcol, _fcol = st.columns(2)
 
         def _corr_to_pct(r):
@@ -577,16 +592,7 @@ with col_right:
     # Radar Chart
     st.divider()
     radar_path = '/tmp/radar_tmp.png'
-    _buddy_raw  = None
-    _buddy_name = None
-    _fb_match   = st.session_state.get('fb_match')
-    if _fb_match and _fb_match.get('buddy'):
-        _bd = _fb_match['buddy']
-        if _bd.get('buddy_dims_raw'):
-            _buddy_raw  = _bd['buddy_dims_raw']
-            _buddy_name = _bd['name']
-    save_radar_chart(display_name, dims, radar_path,
-                     buddy_name=_buddy_name, buddy_dims_raw=_buddy_raw)
+    save_radar_chart(display_name, dims, radar_path)
     st.image(radar_path, width='stretch')
 
 # ── LINKS: Persönlichkeitsprofil mit Dimension-Charts ────────────

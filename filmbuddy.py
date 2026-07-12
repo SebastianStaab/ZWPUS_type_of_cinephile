@@ -248,6 +248,53 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
             )
             unseen_gem = _unseen[0] if _unseen else None
 
+            # ── Buddy-Dims (live berechnet aus Supabase-Ratings) ───
+            # Fallback wenn keine gespeicherten dimensions_json vorhanden
+            _bvals  = list(their_ratings.values())
+            _byears = []
+            for _k in their_ratings:
+                try:
+                    _y = int(_k.split('|')[1])
+                    if 1900 <= _y <= 2030:
+                        _byears.append(_y)
+                except Exception:
+                    pass
+            _cbd: dict[str, float] = {}
+            # epoche
+            if _byears:
+                _cbd['epoche'] = float(np.median(_byears))
+            # meinungsstaerke (MSE der eigenen Ratings um den Mittelwert)
+            if len(_bvals) >= 5:
+                _bm = float(np.mean(_bvals))
+                _cbd['meinungsstaerke'] = float(np.mean([(v - _bm)**2 for v in _bvals]))
+            # bewertungsstil: Buddy-Rating vs IMDB (für gemeinsame Filme mit IMDB-Daten)
+            _imdb_lkp: dict[str, float] = {}
+            if 'imdb_rating' in df.columns:
+                for _, _irow in df.dropna(subset=['title_norm']).iterrows():
+                    if pd.isna(_irow.get('imdb_rating')):
+                        continue
+                    _iy = int(_irow['year']) if pd.notna(_irow.get('year')) else 0
+                    _imdb_lkp[f"{_irow['title_norm']}|{_iy}"] = float(_irow['imdb_rating'])
+                    _alt2 = _irow.get('title_alt_norm')
+                    if pd.notna(_alt2) and str(_alt2) != str(_irow['title_norm']):
+                        _imdb_lkp[f"{_alt2}|{_iy}"] = float(_irow['imdb_rating'])
+            _bdiffs = [their_ratings[_k] - _imdb_lkp[_k]
+                       for _k in common if _k in _imdb_lkp]
+            if len(_bdiffs) >= 5:
+                _cbd['bewertungsstil'] = float(np.mean(_bdiffs))
+            # geschmacksbreite: Shannon-Entropie der Genres aus gemeinsamen Filmen
+            _bgc: dict[str, float] = {}
+            for _k in common:
+                for _g in _genre_lookup.get(_k, []):
+                    _bgc[_g] = _bgc.get(_g, 0.0) + their_ratings[_k]
+            if len(_bgc) >= 3:
+                _tot = sum(_bgc.values())
+                _probs = [v / _tot for v in _bgc.values() if v > 0]
+                _ent  = -sum(p * float(np.log(p)) for p in _probs if p > 0)
+                _maxe = float(np.log(len(_probs))) if len(_probs) > 1 else 1.0
+                _cbd['geschmacksbreite'] = _ent / _maxe if _maxe > 0 else 0.5
+            computed_buddy_dims = _cbd
+
             mine   = np.array([my_ratings[k]    for k in common])
             theirs = np.array([their_ratings[k] for k in common])
 
@@ -297,7 +344,8 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                 'top_diff':           top_diff,
                 'dealbreaker':        dealbreaker,
                 'buddy_all_ratings':  buddy_all_ratings,
-                'buddy_dims_raw':     _json.loads(_raw_dj) if _raw_dj else None,
+                'buddy_dims_raw':      _json.loads(_raw_dj) if _raw_dj else None,
+                'computed_buddy_dims': computed_buddy_dims,
                 'top_genres':         top_genres,
                 'kinoabend':          top_agree[0] if top_agree else None,
                 'unseen_gem':         unseen_gem,
