@@ -31,12 +31,12 @@ from collections import Counter
 # Persoehnlichkeitsdimensionen
 DIM_STRENG_THRESHOLD   = -0.5   # Ø(user - imdb) < X → Streng
 DIM_MILD_THRESHOLD     =  0.5   # Ø(user - imdb) > X → Mild
-DIM_POLAR_THRESHOLD    =  5.0   # MSE(user−IMDB) > X → Polarisierer  (≈ σ 2.2²)
-DIM_DIPLO_THRESHOLD    =  1.5   # MSE(user−IMDB) < X → Diplomat     (≈ σ 1.2²)
-DIM_SPEZIALIST_ENTROPY = 0.70   # normierte Genre-Entropie < X → Spezialist
-DIM_OMNIVORE_ENTROPY   = 0.88   # normierte Genre-Entropie > X → Omnivore
-DIM_KLASSIKER_YEAR     = 1995   # Median-Jahr < X → Klassiker
-DIM_ZEITGEIST_YEAR     = 2010   # Median-Jahr > X → Zeitgeist
+DIM_POLAR_THRESHOLD    =  3.0   # MSE(user−IMDB) > X → Polarisierer  (war 5.0; ≈ |diff| 1.7)
+DIM_DIPLO_THRESHOLD    =  1.0   # MSE(user−IMDB) < X → Diplomat     (war 1.5)
+DIM_SPEZIALIST_ENTROPY = 0.76   # normierte Genre-Entropie < X → Spezialist (war 0.70)
+DIM_OMNIVORE_ENTROPY   = 0.93   # normierte Genre-Entropie > X → Omnivore  (war 0.88; braucht sehr gleichm. Verteilung)
+DIM_KLASSIKER_AGE      = 20     # mittleres Filmalter (Jahre) > X → Klassiker (ø vor 2005)
+DIM_ZEITGEIST_AGE      =  7     # mittleres Filmalter (Jahre) < X → Zeitgeist  (ø nach 2018)
 
 # Genre-Achievements
 # Trigger: user_avg_genre - user_gesamt_avg > X  (relativ zum eigenen Schnitt,
@@ -502,19 +502,21 @@ def compute_dimensions(df, rating_source='IMDB'):
                                          'label': 'Geschmacksbreite', 'emoji': '🌍'}
 
     # ── D4: Klassiker ↔ Zeitgeist ────────────────────────────────
-    # Median-Jahr der gesehenen Filme — misst WANN man schaut, nicht wie man bewertet
+    # Mittleres Filmalter: ältere Filme zählen proportional mehr.
+    # mean_age = Ø(2025 - Erscheinungsjahr) — robust, kein harter Cutoff.
     if 'year' in df.columns and df['year'].notna().sum() >= 10:
-        med_year = int(df['year'].dropna().median())
-        if med_year < DIM_KLASSIKER_YEAR:
+        years = df['year'].dropna()
+        mean_age = float((2025 - years).clip(lower=0).mean())
+        if mean_age > DIM_KLASSIKER_AGE:
             pole = 'Klassiker'
-            desc = f'Dein Medianjahr: {med_year} — du liebst das Kino von früher.'
-        elif med_year > DIM_ZEITGEIST_YEAR:
+            desc = f'Deine Filme sind im Schnitt {mean_age:.0f} Jahre alt — du liebst das Kino von früher.'
+        elif mean_age < DIM_ZEITGEIST_AGE:
             pole = 'Zeitgeist'
-            desc = f'Dein Medianjahr: {med_year} — du schaust hauptsächlich Neues.'
+            desc = f'Deine Filme sind im Schnitt nur {mean_age:.0f} Jahre alt — du schaust hauptsächlich Neues.'
         else:
             pole = 'Ausgewogen'
-            desc = f'Du schaust quer durch die Jahrzehnte (Medianjahr: {med_year}).'
-        dims['epoche'] = {'pole': pole, 'score': med_year, 'desc': desc,
+            desc = f'Guter Mix: deine Filme sind im Schnitt {mean_age:.0f} Jahre alt.'
+        dims['epoche'] = {'pole': pole, 'score': round(mean_age, 2), 'desc': desc,
                            'label': 'Lieblingsepoche', 'emoji': '🕰️'}
 
     # ── D5: Blockbuster ↔ Arthouse ────────────────────────────────────
@@ -540,12 +542,12 @@ def compute_dimensions(df, rating_source='IMDB'):
             art_adj = float((art['user_rating'] - art['imdb_rating']).mean()) - overall_bias_d5
             score   = round(bb_adj - art_adj, 3)
             _src    = 'TMDB' if _is_tmdb else 'IMDB'
-            if score > 0.3:
+            if score > 0.20:
                 pole = 'Blockbuster-Fan'
                 desc = (f'Du bewertest große Kassenschlager (>{_bb_thresh//1000}k {_src}-Votes) '
                         f'relativ {score:.2f} Punkte besser als Arthouse-Filme '
                         f'(n_bb={len(bb)}, n_art={len(art)}).')
-            elif score < -0.3:
+            elif score < -0.20:
                 pole = 'Arthouse-Aficionado'
                 desc = (f'Du bewertest Nischenfilme (<{_art_thresh//1000}k {_src}-Votes) '
                         f'relativ {abs(score):.2f} Punkte besser als Blockbuster '
@@ -1323,13 +1325,16 @@ def save_radar_chart(name, dims, out_path):
             # score ist normierte Entropie [0, 1]
             return max(0.0, min(1.0, score))
         elif key == 'epoche':
-            # score ist Medianjahr, Bereich 1960–2025
-            # umgekehrt: außen = Klassiker (altes Kino), innen = Zeitgeist
-            return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
+            # Legacy: score > 100 → altes Medianjahr-Format (z.B. 2015)
+            if score > 100:
+                return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
+            # Neues Format: mean_age in Jahren; 40 Jahre = max Klassiker
+            return max(0.0, min(1.0, score / 40.0))
         elif key == 'publikum':
-            # score: Blockbuster-adj − Arthouse-adj, Bereich ca. -2 bis +2
-            # umgekehrt: außen = Arthouse, innen = Blockbuster
-            return max(0.0, min(1.0, 1.0 - (score + 2) / 4))
+            # score: Blockbuster-adj − Arthouse-adj
+            # Tighter range ±1.0 statt ±2.0 → Unterschiede besser sichtbar
+            # außen = Arthouse (negativ), innen = Blockbuster (positiv)
+            return max(0.0, min(1.0, 1.0 - (score + 1.0) / 2.0))
         return 0.5
 
     _dim_cfg = [
@@ -1522,9 +1527,11 @@ def save_comparison_radar(name, dims, others, out_path):
         elif key == 'geschmacksbreite':
             return max(0.0, min(1.0, score))
         elif key == 'epoche':
-            return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
+            if score > 2.0:  # Legacy: altes Medianjahr-Format
+                return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
+            return max(0.0, min(1.0, score / 0.45))
         elif key == 'publikum':
-            return max(0.0, min(1.0, 1.0 - (score + 2) / 4))
+            return max(0.0, min(1.0, 1.0 - (score + 1.0) / 2.0))
         return 0.5
 
     _all_cfg = [
@@ -1547,7 +1554,7 @@ def save_comparison_radar(name, dims, others, out_path):
     n      = len(cfg)
     angles = [i * 2 * 3.14159265 / n for i in range(n)] + [0]
 
-    fig, ax = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+    fig, ax = plt.subplots(figsize=(3.8, 3.8), subplot_kw=dict(polar=True))
     fig.patch.set_facecolor('#0e1117')
     ax.set_facecolor('#111827')
 

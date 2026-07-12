@@ -260,9 +260,9 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
                 except Exception:
                     pass
             _cbd: dict[str, float] = {}
-            # epoche
+            # epoche: mittleres Filmalter (same metric as compute_dimensions D4)
             if _byears:
-                _cbd['epoche'] = float(np.median(_byears))
+                _cbd['epoche'] = float(sum(2025 - y for y in _byears) / len(_byears))
             # meinungsstaerke (MSE der eigenen Ratings um den Mittelwert)
             if len(_bvals) >= 5:
                 _bm = float(np.mean(_bvals))
@@ -507,8 +507,7 @@ def get_community_stats() -> dict:
         total_films = sum(u['film_count'] for u in res.data)
         return {
             'total_users':  total,
-            'total_films':  total_films,
-            'users':        res.data,
+            'total_films':  total_films,            'users':        res.data,
         }
     except Exception:
         return {}
