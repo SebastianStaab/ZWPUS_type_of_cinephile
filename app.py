@@ -816,21 +816,43 @@ if _is_lb and api_key:
                 st.dataframe(_missing.reset_index(drop=True), width='stretch', hide_index=True)
         st.dataframe(df_raw[_dcols].head(), width='stretch', hide_index=True)
 
-# ── Footer ────────────────────────────────────────────────────────
-st.divider()
-_footer_parts = [
-    '🎙️ [Zwei wie Pech & Schwafel](https://open.spotify.com/show/22pGOX5N9KjeJajq1aH7Nt)',
-    f'Daten: {"Letterboxd + TMDB" if _rating_source == "TMDB" else "IMDB"}',
-    'Ratings werden nur bei Opt-in gespeichert.',
-]
+# ── Community Profile Browser ─────────────────────────────────────
 if _fb.is_available():
-    try:
-        _footer_stats = _fb.get_community_stats()
-        if _footer_stats and _footer_stats.get('total_users', 0) > 0:
-            _footer_pool_films = _footer_stats.get('total_films') or _footer_stats.get('avg_films', '')
-            _footer_parts.append(
-                f"🤝 Filmbuddy-Pool: {_footer_stats['total_users']} Nutzer · {_footer_pool_films} Filme"
-            )
-    except Exception:
-        pass
-st.caption(' • '.join(_footer_parts))
+    st.divider()
+    st.subheader('👥 Community Profile')
+    _all_names = _fb.get_all_display_names()
+    if _all_names:
+        _selected = st.selectbox(
+            'Profil ansehen:',
+            options=['— auswählen —'] + _all_names,
+            key='community_profile_select',
+        )
+        if _selected and _selected != '— auswählen —':
+            with st.spinner(f'Lade Profil von {_selected}…'):
+                _prof = _fb.get_profile(_selected)
+            if _prof and _prof.get('dims_raw'):
+                _pcol1, _pcol2 = st.columns([1, 1.1], gap='large')
+                with _pcol1:
+                    _prof_dims = {k: {'score': v} for k, v in _prof['dims_raw'].items()}
+                    _prof_radar_path = '/tmp/profile_radar.png'
+                    save_radar_chart(_selected, _prof_dims, _prof_radar_path)
+                    st.image(_prof_radar_path, width='stretch')
+                    _uc = _prof.get('unique_count')
+                    _fc = _prof['film_count']
+                    if _uc is not None and _uc != _fc:
+                        st.caption(f"\U0001f3ac {_uc} Filme ({_fc} Ratings)")
+                    else:
+                        st.caption(f"\U0001f3ac {_fc} Filme bewertet")
+                with _pcol2:
+                    if _prof['achievements']:
+                        for _a in _prof['achievements']:
+                            st.markdown(f"{_a['emoji']} **{_a['name']}**")
+                    else:
+                        st.caption('Keine Achievements gespeichert.')
+            elif _prof:
+                st.caption(f'{_selected} hat noch kein Profil berechnet (CSV neu hochladen + speichern).')
+    else:
+        st.caption('Noch keine Profile im Pool.')
+
+# ── Footer ──────────────────────
+st.divider()

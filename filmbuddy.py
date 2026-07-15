@@ -511,3 +511,53 @@ def get_community_stats() -> dict:
         }
     except Exception:
         return {}
+
+
+def get_all_display_names() -> list:
+    """Gibt sortierte Liste aller gespeicherten Display-Namen zurück."""
+    client = _get_client()
+    if client is None:
+        return []
+    try:
+        res = client.table('fb_users').select('display_name').order('display_name').execute()
+        return [u['display_name'] for u in res.data] if res.data else []
+    except Exception:
+        return []
+
+
+def get_profile(display_name: str) -> dict:
+    """Lädt gespeichertes Lite-Profil (Dims + Achievements) für einen Nutzer."""
+    client = _get_client()
+    if client is None:
+        return {}
+    try:
+        import json as _json
+        user_res = client.table('fb_users').select(
+            'id, display_name, film_count, last_upload, dimensions_json'
+        ).eq('display_name', display_name).execute()
+        if not user_res.data:
+            return {}
+        u = user_res.data[0]
+        dims_raw = _json.loads(u['dimensions_json']) if u.get('dimensions_json') else None
+
+        # Unique film count aus fb_ratings (dedupliziert nach title_norm+year)
+        count_res = (
+            client.table('fb_ratings')
+            .select('id', count='exact')
+            .eq('user_id', u['id'])
+            .execute()
+        )
+        unique_count = count_res.count if hasattr(count_res, 'count') and count_res.count is not None else None
+
+        ach_res = client.table('fb_achievements').select('emoji, name').eq('user_id', u['id']).execute()
+        return {
+            'display_name':  u['display_name'],
+            'film_count':    u.get('film_count', 0),   # Rohe CSV-Zeilen
+            'unique_count':  unique_count,               # Einzigartige Filme in DB
+            'last_upload':   u.get('last_upload', ''),
+            'dims_raw':      dims_raw,
+            'achievements':  ach_res.data or [],
+        }
+    except Exception as e:
+        print(f'  get_profile FEHLER: {e}')
+        return {}
