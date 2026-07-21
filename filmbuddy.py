@@ -561,3 +561,169 @@ def get_profile(display_name: str) -> dict:
     except Exception as e:
         print(f'  get_profile FEHLER: {e}')
         return {}
+
+
+def compare_with_user(my_df, target_display_name: str) -> dict:
+    """Vergleicht my_df mit einem spezifischen gespeicherten Nutzer.
+    Gibt ein Buddy-Format-Dict zurück (gleiche Struktur wie find_buddy-Ergebnisse)."""
+    import json as _json
+    client = _get_client()
+    if client is None:
+        return {}
+    try:
+        target_res = client.table('fb_users').select(
+            'id, display_name, dimensions_json'
+        ).eq('display_name', target_display_name.strip()).execute()
+        if not target_res.data:
+            return {}
+        target   = target_res.data[0]
+        target_id = target['id']
+
+        # Meine Ratings normalisieren
+        my_ratings: dict = {}
+        for _, row in my_df.dropna(subset=['user_rating']).iterrows():
+            year = int(row['year']) if pd.notna(row.get('year')) else 0
+            key1 = f"{row['title_norm']}|{year}"
+            my_ratings[key1] = float(row['user_rating'])
+            alt = row.get('title_alt_norm')
+            if pd.notna(alt) and str(alt) and str(alt) != str(row['title_norm']):
+                key2 = f"{str(alt)}|{year}"
+                if key2 not in my_ratings:
+                    my_ratings[key2] = float(row['user_rating'])
+        my_keys = set(my_ratings)
+
+        # Genre-Lookup
+        _genre_lookup: dict = {}
+        if 'genres' in my_df.columns:
+            for _, _gr in my_df.dropna(subset=['title_norm']).iterrows():
+                _yr = int(_gr['year']) if pd.notna(_gr.get('year')) else 0
+                _raw = _gr.get('genres', '')
+                if not pd.notna(_raw) or not str(_raw).strip():
+                    continue
+                _gl = [g.strip() for g in str(_raw).split(',') if g.strip()]
+                _genre_lookup[f"{_gr['title_norm']}|{_yr}"] = _gl
+                _alt = _gr.get('title_alt_norm')
+                if pd.notna(_alt) and str(_alt) != str(_gr['title_norm']):
+                    _genre_lookup[f"{_alt}|{_yr}"] = _gl
+
+        # IMDB-Lookup für Bewertungsstil
+        _imdb_lkp: dict = {}
+        if 'imdb_rating' in my_df.columns:
+            for _, _irow in my_df.dropna(subset=['title_norm']).iterrows():
+                if pd.isna(_irow.get('imdb_rating')):
+                    continue
+                _iy = int(_irow['year']) if pd.notna(_irow.get('year')) else 0
+                _imdb_lkp[f"{_irow['title_norm']}|{_iy}"] = float(_irow['imdb_rating'])
+                _alt2 = _irow.get('title_alt_norm')
+                if pd.notna(_alt2) and str(_alt2) != str(_irow['title_norm']):
+                    _imdb_lkp[f"{_alt2}|{_iy}"] = float(_irow['imdb_rating'])
+
+        # Target-Ratings laden (paginiert)
+        _PAGE = 1000
+        their_ratings: dict = {}
+        offset = 0
+        while True:
+            page = (
+                client.table('fb_ratings')
+                .select('title_norm, year, user_rating')
+                .eq('user_id', target_id)
+                .range(offset, offset + _PAGE - 1)
+                .execute()
+            )
+            for r in page.data:
+                their_ratings[f"{r['title_norm']}|{r['year']}"] = float(r['user_rating'])
+            if len(page.data) < _PAGE:
+                break
+            offset += _PAGE
+
+        common = my_keys & set(their_ratings)
+        if len(common) < 3:
+            return {'name': target['display_name'], 'n': len(common), 'too_few': True}
+
+        mine   = np.array([my_ratings[k]    for k in common])
+        theirs = np.array([their_ratings[k] for k in common])
+        if mine.std() < 0.01 or theirs.std() < 0.01:
+            return {'name': target['display_name'], 'n': len(common), 'too_few': True}
+
+        corr = float(np.corrcoef(mine, theirs)[0, 1])
+        if np.isnan(corr):
+            return {}
+
+        top_agree = [
+            (k.split('|')[0], my_ratings[k], their_ratings[k])
+            for k in sorted(common, key=lambda k: min(my_ratings[k], their_ratings[k]), reverse=True)
+            if my_ratings[k] >= 7 and their_ratings[k] >= 7
+        ][:3]
+
+        top_diff = [
+            (k.split('|')[0], my_ratings[k], their_ratings[k])
+            for k in sorted(common, key=lambda k: abs(my_ratings[k] - their_ratings[k]), reverse=True)
+        ][:3]
+
+        dealbreaker = [
+            (k.split('|')[0], my_ratings[k], their_ratings[k])
+            for k in sorted(common, key=lambda k: abs(my_ratings[k] - their_ratings[k]), reverse=True)
+            if abs(my_ratings[k] - their_ratings[k]) >= 5
+        ][:3]
+
+        _unseen = sorted(
+            [(k.split('|')[0], their_ratings[k])
+             for k in their_ratings if k not in my_keys and their_ratings[k] >= 8.0],
+            key=lambda x: x[1], reverse=True
+        )
+        unseen_gem = _unseen[0] if _unseen else None
+
+        _gc: dict = {}
+        for _k in common:
+            _w = min(my_ratings[_k], their_ratings[_k])
+            for _g in _genre_lookup.get(_k, []):
+                _gc[_g] = _gc.get(_g, 0.0) + _w
+        top_genres = sorted(_gc.items(), key=lambda x: x[1], reverse=True)[:3]
+
+        _bvals  = list(their_ratings.values())
+        _byears = []
+        for _k in their_ratings:
+            try:
+                _y = int(_k.split('|')[1])
+                if 1900 <= _y <= 2030:
+                    _byears.append(_y)
+            except Exception:
+                pass
+        _cbd: dict = {}
+        if _byears:
+            _cbd['epoche'] = float(sum(2025 - y for y in _byears) / len(_byears))
+        if len(_bvals) >= 5:
+            _bm = float(np.mean(_bvals))
+            _cbd['meinungsstaerke'] = float(np.mean([(v - _bm)**2 for v in _bvals]))
+        _bdiffs = [their_ratings[_k] - _imdb_lkp[_k] for _k in common if _k in _imdb_lkp]
+        if len(_bdiffs) >= 5:
+            _cbd['bewertungsstil'] = float(np.mean(_bdiffs))
+        _bgc: dict = {}
+        for _k in common:
+            for _g in _genre_lookup.get(_k, []):
+                _bgc[_g] = _bgc.get(_g, 0.0) + their_ratings[_k]
+        if len(_bgc) >= 3:
+            _tot = sum(_bgc.values())
+            _probs = [v / _tot for v in _bgc.values() if v > 0]
+            _ent  = -sum(p * float(np.log(p)) for p in _probs if p > 0)
+            _maxe = float(np.log(len(_probs))) if len(_probs) > 1 else 1.0
+            _cbd['geschmacksbreite'] = _ent / _maxe if _maxe > 0 else 0.5
+
+        _raw_dj = target.get('dimensions_json')
+        return {
+            'name':               target['display_name'],
+            'corr':               round(corr, 3),
+            'n':                  len(common),
+            'top_agree':          top_agree,
+            'top_diff':           top_diff,
+            'dealbreaker':        dealbreaker,
+            'buddy_all_ratings':  _bvals,
+            'buddy_dims_raw':     _json.loads(_raw_dj) if _raw_dj else None,
+            'computed_buddy_dims': _cbd,
+            'top_genres':         top_genres,
+            'kinoabend':          top_agree[0] if top_agree else None,
+            'unseen_gem':         unseen_gem,
+        }
+    except Exception as e:
+        print(f'  compare_with_user FEHLER: {e}')
+        return {}

@@ -321,13 +321,23 @@ if _fb.is_available() and st.session_state.get('fb_save_triggered') and name.str
         st.error('Filmbuddy: Speichern fehlgeschlagen — Supabase nicht erreichbar.')
 
 # ── Filmbuddy-Kapitel (ganz oben) ────────────────────────────────
-if _fb.is_available() and st.session_state.get('fb_match') is not None:
+if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is not None):
     st.divider()
     st.subheader('🤝 Filmbuddy')
     if st.session_state.get('fb_save_ok'):
         st.success(f"✅ {st.session_state.pop('fb_save_ok')} Ratings gespeichert!")
-    _match = st.session_state['fb_match']
-    if not _match or _match.get('total_users', 0) == 0:
+    # ── Nutzer-Auswahl für Vergleich ──────────────────────────────
+    _cmp_selected = None
+    if df is not None:
+        _cmp_all = [n for n in _fb.get_all_display_names() if n != (name.strip() or '___')]
+        if _cmp_all:
+            _cmp_raw = st.selectbox('🔍 Person zum Vergleich:', ['— auswählen —'] + _cmp_all, key='cmp_select')
+            _cmp_selected = None if _cmp_raw == '— auswählen —' else _cmp_raw
+    _match = st.session_state.get('fb_match')
+    if _match is None:
+        if not _cmp_selected:
+            st.info('💾 CSV hochladen und im Filmbuddy-Pool speichern, um automatischen Buddy & Frenemy zu sehen.')
+    elif not _match or _match.get('total_users', 0) == 0:
         st.info('Noch zu wenige Nutzer mit Überschneidungen. Schick den Link an die Community! 🎬')
         _dpu0 = _match.get('debug_per_user', {}) if _match else {}
         if _dpu0:
@@ -489,6 +499,18 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
                 for _uname, _n in sorted(_dpu.items(), key=lambda x: x[1], reverse=True):
                     _flag = ' ✅' if _n >= 3 else ' ⚠️ (< 3, kein Match)'
                     st.write(f'**{_uname}**: {_n} gemeinsame Filme{_flag}')
+
+        # ── Manueller Vergleich ──────────────────────────────────
+        if _cmp_selected:
+            with st.spinner(f'Vergleiche mit {_cmp_selected}…'):
+                _cmp_result = _fb.compare_with_user(df, _cmp_selected)
+            if not _cmp_result:
+                st.warning(f'Vergleich mit {_cmp_selected} fehlgeschlagen.')
+            elif _cmp_result.get('too_few'):
+                st.info(f'Nur {_cmp_result["n"]} gemeinsame Filme mit {_cmp_selected} — mindestens 3 nötig.')
+            else:
+                st.markdown(f'---')
+                _render_person(_cmp_result, '#1a2a3a', '🔍', f'Vergleich: {_cmp_selected}', show_agree=True)
 
 # ── Achievements (ganz oben) ─────────────────────────────────────
 all_ach = progressive + bonus + genre_ach + insider
@@ -815,44 +837,6 @@ if _is_lb and api_key:
                 st.markdown(f'**Nicht gefunden auf TMDB ({len(_missing)}):**')
                 st.dataframe(_missing.reset_index(drop=True), width='stretch', hide_index=True)
         st.dataframe(df_raw[_dcols].head(), width='stretch', hide_index=True)
-
-# ── Community Profile Browser ─────────────────────────────────────
-if _fb.is_available():
-    st.divider()
-    st.subheader('👥 Community Profile')
-    _all_names = _fb.get_all_display_names()
-    if _all_names:
-        _selected = st.selectbox(
-            'Profil ansehen:',
-            options=['— auswählen —'] + _all_names,
-            key='community_profile_select',
-        )
-        if _selected and _selected != '— auswählen —':
-            with st.spinner(f'Lade Profil von {_selected}…'):
-                _prof = _fb.get_profile(_selected)
-            if _prof and _prof.get('dims_raw'):
-                _pcol1, _pcol2 = st.columns([1, 1.1], gap='large')
-                with _pcol1:
-                    _prof_dims = {k: {'score': v} for k, v in _prof['dims_raw'].items()}
-                    _prof_radar_path = '/tmp/profile_radar.png'
-                    save_radar_chart(_selected, _prof_dims, _prof_radar_path)
-                    st.image(_prof_radar_path, width='stretch')
-                    _uc = _prof.get('unique_count')
-                    _fc = _prof['film_count']
-                    if _uc is not None and _uc != _fc:
-                        st.caption(f"\U0001f3ac {_uc} Filme ({_fc} Ratings)")
-                    else:
-                        st.caption(f"\U0001f3ac {_fc} Filme bewertet")
-                with _pcol2:
-                    if _prof['achievements']:
-                        for _a in _prof['achievements']:
-                            st.markdown(f"{_a['emoji']} **{_a['name']}**")
-                    else:
-                        st.caption('Keine Achievements gespeichert.')
-            elif _prof:
-                st.caption(f'{_selected} hat noch kein Profil berechnet (CSV neu hochladen + speichern).')
-    else:
-        st.caption('Noch keine Profile im Pool.')
 
 # ── Footer ──────────────────────
 st.divider()
