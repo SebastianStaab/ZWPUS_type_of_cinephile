@@ -1372,9 +1372,9 @@ def save_radar_chart(name, dims, out_path):
         ax.text(angle, 0.08, clabel, ha='center', va='center',
                 fontsize=10, color='grey')
 
-    ax.fill(angles, scores_plot, color='#e84545', alpha=0.25)
-    ax.plot(angles, scores_plot, color='#e84545', lw=2.5)
-    ax.scatter(angles[:-1], scores, color='#e84545', s=60, zorder=5)
+    ax.fill(angles, scores_plot, color='#4fc3f7', alpha=0.25)
+    ax.plot(angles, scores_plot, color='#4fc3f7', lw=2.5)
+    ax.scatter(angles[:-1], scores, color='#4fc3f7', s=60, zorder=5)
 
     ax.set_title(f'Filmpersoenlichkeit: {name}', size=13, pad=20, fontweight='bold')
     plt.tight_layout()
@@ -1513,9 +1513,9 @@ def save_comparison_radar(name, dims, others, out_path):
     # User
     my_sc = [_norm(k, _raw(dims, k)) for k, _, _ in cfg]
     mp    = my_sc + [my_sc[0]]
-    ax.fill(angles, mp, color='#e84545', alpha=0.22)
-    ax.plot(angles, mp, color='#e84545', lw=2.5, label=name)
-    ax.scatter(angles[:-1], my_sc, color='#e84545', s=55, zorder=5)
+    ax.fill(angles, mp, color='#4fc3f7', alpha=0.22)
+    ax.plot(angles, mp, color='#4fc3f7', lw=2.5, label=name)
+    ax.scatter(angles[:-1], my_sc, color='#4fc3f7', s=55, zorder=5)
 
     # Others (buddy, frenemy, …)
     for o_label, o_raw, o_color, o_ls in others:

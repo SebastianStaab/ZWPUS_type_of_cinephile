@@ -503,11 +503,31 @@ def get_community_stats() -> dict:
         res = client.table('fb_users').select('display_name, film_count, last_upload').execute()
         if not res.data:
             return {}
-        total = len(res.data)
-        total_films = sum(u['film_count'] for u in res.data)
+        total        = len(res.data)
+        total_films  = sum(u['film_count'] for u in res.data)  # Summe aller Ratings (inkl. Duplikate)
+
+        # Einzigartige Filme über alle User: distinct (title_norm, year) aus fb_ratings
+        _PAGE = 1000
+        _pairs: set = set()
+        _off = 0
+        while True:
+            _page = (
+                client.table('fb_ratings')
+                .select('title_norm, year')
+                .range(_off, _off + _PAGE - 1)
+                .execute()
+            )
+            for _r in _page.data:
+                _pairs.add((_r['title_norm'], _r['year']))
+            if len(_page.data) < _PAGE:
+                break
+            _off += _PAGE
+
         return {
-            'total_users':  total,
-            'total_films':  total_films,            'users':        res.data,
+            'total_users':        total,
+            'total_films':        total_films,       # Ratings gesamt (für Rückwärtskompatibilität)
+            'total_unique_films': len(_pairs),       # Einzigartige Filme (distinct title+year)
+            'users':              res.data,
         }
     except Exception:
         return {}

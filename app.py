@@ -108,10 +108,14 @@ with st.sidebar:
     if _fb.is_available():
         _sidebar_stats = _fb.get_community_stats()
         if _sidebar_stats and _sidebar_stats.get('total_users', 0) > 0:
-            _pool_films = _sidebar_stats.get('total_films') or _sidebar_stats.get('avg_films', '?')
+            _pool_ratings = _sidebar_stats.get('total_films', '?')
+            _pool_unique  = _sidebar_stats.get('total_unique_films')
+            _pool_str = (
+                f"{_pool_unique:,} Filme · {_pool_ratings:,} Ratings"
+                if _pool_unique else f"{_pool_ratings} Ratings"
+            )
             st.caption(
-                f"🤝 **Filmbuddy-Pool:** {_sidebar_stats['total_users']} Nutzer · "
-                f"{_pool_films} Filme"
+                f"🤝 **Filmbuddy-Pool:** {_sidebar_stats['total_users']} Nutzer · {_pool_str}"
             )
         else:
             st.caption('🤝 **Filmbuddy-Pool:** noch leer')
@@ -201,65 +205,87 @@ if not uploaded:
 
 # ── Daten laden ───────────────────────────────────────────────────
 
-# Datei in temporären Pfad schreiben
-tmp_path = '/tmp/ratings_upload.csv'
-with open(tmp_path, 'wb') as f:
-    f.write(uploaded.read())
+# Cache-Key: Name + Größe der hochgeladenen Datei.
+# Identische Datei → df/df_raw aus session_state, kein TMDB-Re-Load.
+tmp_path    = '/tmp/ratings_upload.csv'
+_file_bytes = uploaded.read()
+_file_key   = f"{uploaded.name}_{len(_file_bytes)}"
+_need_reload = st.session_state.get('_loaded_file_key') != _file_key
 
-# Progressbar für TMDB-Anreicherung
-_prog_bar  = st.empty()
-_prog_text = st.empty()
+if _need_reload:
+    with open(tmp_path, 'wb') as f:
+        f.write(_file_bytes)
 
-def _tmdb_progress(done, total):
-    pct = done / total if total else 0
-    _prog_bar.progress(pct)
-    _prog_text.caption(f'🎬 TMDB-Anreicherung: {done}/{total} Filme geladen…')
-    _update_cache_status(done, total)
-    if done == total:
-        _prog_bar.empty()
-        _prog_text.empty()
-        _update_cache_status()  # finale Cache-Größe
+    # Progressbar für TMDB-Anreicherung
+    _prog_bar  = st.empty()
+    _prog_text = st.empty()
 
-# ── TMDB API Quick-Test ──────────────────────────────────────────
-_is_lb_quick = False
-try:
-    _quick_cols = pd.read_csv(tmp_path, nrows=0).columns.tolist()
-    _is_lb_quick = 'Name' in _quick_cols and 'Letterboxd URI' in _quick_cols
-except Exception:
-    pass
+    def _tmdb_progress(done, total):
+        pct = done / total if total else 0
+        _prog_bar.progress(pct)
+        _prog_text.caption(f'🎬 TMDB-Anreicherung: {done}/{total} Filme geladen…')
+        _update_cache_status(done, total)
+        if done == total:
+            _prog_bar.empty()
+            _prog_text.empty()
+            _update_cache_status()  # finale Cache-Größe
 
-_debug_api_lines = []
-if _is_lb_quick and api_key:
+    # ── TMDB API Quick-Test ──────────────────────────────────────
+    _is_lb_quick = False
     try:
-        import requests as _req
-        _tr = _req.get('https://api.themoviedb.org/3/search/movie',
-                       params={'api_key': api_key.strip(), 'query': 'Pulp Fiction'}, timeout=8)
-        _debug_api_lines.append(f'API-Test "Pulp Fiction": HTTP {_tr.status_code} — {len(_tr.json().get("results", []))} Treffer')
+        _quick_cols = pd.read_csv(tmp_path, nrows=0).columns.tolist()
+        _is_lb_quick = 'Name' in _quick_cols and 'Letterboxd URI' in _quick_cols
+    except Exception:
+        pass
+
+    _debug_api_lines = []
+    if _is_lb_quick and api_key:
         try:
-            _lbdf_test = pd.read_csv(tmp_path, nrows=2)
-            _t1 = str(_lbdf_test['Name'].iloc[0]) if 'Name' in _lbdf_test.columns else '?'
-            _y1 = _lbdf_test['Year'].iloc[0] if 'Year' in _lbdf_test.columns else None
-            _params1 = {'api_key': api_key.strip(), 'query': _t1}
-            if _y1 and str(_y1) not in ('nan', '0'):
-                _params1['year'] = int(_y1)
-            _tr2 = _req.get('https://api.themoviedb.org/3/search/movie', params=_params1, timeout=8)
-            _debug_api_lines.append(f'API-Test "{_t1}" ({_y1}): HTTP {_tr2.status_code} — {len(_tr2.json().get("results", []))} Treffer')
-        except Exception as _te2:
-            _debug_api_lines.append(f'LB-Film-Test FEHLER: {_te2}')
-    except Exception as _te:
-        _debug_api_lines.append(f'API-Test FEHLER: {_te}')
+            import requests as _req
+            _tr = _req.get('https://api.themoviedb.org/3/search/movie',
+                           params={'api_key': api_key.strip(), 'query': 'Pulp Fiction'}, timeout=8)
+            _debug_api_lines.append(f'API-Test "Pulp Fiction": HTTP {_tr.status_code} — {len(_tr.json().get("results", []))} Treffer')
+            try:
+                _lbdf_test = pd.read_csv(tmp_path, nrows=2)
+                _t1 = str(_lbdf_test['Name'].iloc[0]) if 'Name' in _lbdf_test.columns else '?'
+                _y1 = _lbdf_test['Year'].iloc[0] if 'Year' in _lbdf_test.columns else None
+                _params1 = {'api_key': api_key.strip(), 'query': _t1}
+                if _y1 and str(_y1) not in ('nan', '0'):
+                    _params1['year'] = int(_y1)
+                _tr2 = _req.get('https://api.themoviedb.org/3/search/movie', params=_params1, timeout=8)
+                _debug_api_lines.append(f'API-Test "{_t1}" ({_y1}): HTTP {_tr2.status_code} — {len(_tr2.json().get("results", []))} Treffer')
+            except Exception as _te2:
+                _debug_api_lines.append(f'LB-Film-Test FEHLER: {_te2}')
+        except Exception as _te:
+            _debug_api_lines.append(f'API-Test FEHLER: {_te}')
 
-with st.spinner('Lade Ratings...'):
-    try:
-        df, df_raw = detect_and_load(
-            tmp_path,
-            api_key=api_key if api_key else None,
-            cache_path=cache_path,
-            progress_cb=_tmdb_progress,
-        )
-    except Exception as e:
-        st.error(f'Fehler beim Laden: {e}')
-        st.stop()
+    with st.spinner('Lade Ratings...'):
+        try:
+            df, df_raw = detect_and_load(
+                tmp_path,
+                api_key=api_key if api_key else None,
+                cache_path=cache_path,
+                progress_cb=_tmdb_progress,
+            )
+        except Exception as e:
+            st.error(f'Fehler beim Laden: {e}')
+            st.stop()
+
+    # Ergebnis cachen — kein Re-Load bei Interaktionen (Speichern, Vergleich usw.)
+    st.session_state['_loaded_file_key']  = _file_key
+    st.session_state['_cached_df']        = df
+    st.session_state['_cached_df_raw']    = df_raw
+    st.session_state['_cached_debug_api'] = _debug_api_lines
+    # Neue Datei → alten Buddy-Match verwerfen
+    st.session_state.pop('fb_match', None)
+    st.session_state.pop('fb_save_ok', None)
+    st.session_state.pop('fb_save_triggered', None)
+
+else:
+    # Bereits geladen — gecachte Daten direkt verwenden, kein TMDB-Re-Load
+    df               = st.session_state['_cached_df']
+    df_raw           = st.session_state['_cached_df_raw']
+    _debug_api_lines = st.session_state.get('_cached_debug_api', [])
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 david_df, robert_df = load_david_robert(script_dir)
@@ -359,7 +385,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             _df_t = pd.DataFrame(_clean, columns=['Film', col_me, col_them])
             st.dataframe(_df_t, width='stretch', hide_index=True)
 
-        def _rating_histogram(my_ratings_all, buddy_ratings_all, buddy_name):
+        def _rating_histogram(my_ratings_all, buddy_ratings_all, buddy_name, other_color='#4caf50'):
             if not buddy_ratings_all:
                 return
             import numpy as np
@@ -367,8 +393,8 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             _fig, _ax = plt.subplots(figsize=(5, 2.8))
             _fig.patch.set_facecolor('#0e1117')
             _ax.set_facecolor('#0e1117')
-            _ax.hist(my_ratings_all, bins=_bins, alpha=0.65, color='#e84545', label='Du', density=True)
-            _ax.hist(buddy_ratings_all, bins=_bins, alpha=0.55, color='#4fc3f7', label=buddy_name, density=True)
+            _ax.hist(my_ratings_all, bins=_bins, alpha=0.65, color='#4fc3f7', label='Du', density=True)
+            _ax.hist(buddy_ratings_all, bins=_bins, alpha=0.55, color=other_color, label=buddy_name, density=True)
             _ax.set_xlabel('Bewertung', color='white', fontsize=9)
             _ax.set_ylabel('Anteil', color='white', fontsize=9)
             _ax.set_xlim(0.5, 10.5)
@@ -381,7 +407,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             st.pyplot(_fig, width='stretch')
             plt.close(_fig)
 
-        def _render_person(person, bg, emoji, label, show_agree=True):
+        def _render_person(person, bg, emoji, label, show_agree=True, person_color='#4caf50'):
             _pct = _corr_to_pct(person['corr'])
             st.markdown(
                 f"<div style='background:{bg};border-radius:12px;padding:14px 18px;margin-bottom:8px'>"
@@ -395,7 +421,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
                        help='(Pearson r + 1) / 2 × 100 — 100% = identischer Geschmack')
             _m2.metric('Gemeinsame Filme', person['n'])
             _my_all = df['user_rating'].dropna().tolist()
-            _rating_histogram(_my_all, person.get('buddy_all_ratings', []), person['name'])
+            _rating_histogram(_my_all, person.get('buddy_all_ratings', []), person['name'], other_color=person_color)
             if person.get('dealbreaker'):
                 st.markdown('**💔 Deal Breaker** *(Differenz ≥ 5 Punkte)*')
                 _render_table(person['dealbreaker'], 'Du', person['name'])
@@ -458,9 +484,9 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
                 _cmp_dims = _cmp_result.get('buddy_dims_raw') or _cmp_result.get('computed_buddy_dims')
                 if _cmp_dims:
                     _cmp_radar_path = '/tmp/cmp_radar.png'
-                    if save_comparison_radar(display_name, dims, [(_cmp_selected, _cmp_dims, '#4fc3f7', '--')], _cmp_radar_path):
+                    if save_comparison_radar(display_name, dims, [(_cmp_selected, _cmp_dims, '#ff9800', '--')], _cmp_radar_path):
                         st.image(_cmp_radar_path, width='stretch')
-                _render_person(_cmp_result, '#1a2a3a', '🔍', f'Vergleich: {_cmp_selected}', show_agree=True)
+                _render_person(_cmp_result, '#1a2a3a', '🔍', f'Vergleich: {_cmp_selected}', show_agree=True, person_color='#ff9800')
         else:
             # ── Auto: Buddy & Frenemy ───────────────────────────────────────────────────
             _others_radar = []
@@ -471,7 +497,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             if frenemy and not _same:
                 _fd = frenemy.get('buddy_dims_raw') or frenemy.get('computed_buddy_dims')
                 if _fd:
-                    _others_radar.append((frenemy['name'], _fd, '#ff9800', ':'))
+                    _others_radar.append((frenemy['name'], _fd, '#e84545', ':'))
             if _others_radar:
                 _tri_path = '/tmp/triple_radar.png'
                 if save_comparison_radar(display_name, dims, _others_radar, _tri_path):
@@ -479,10 +505,10 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             _bcol, _fcol = st.columns(2)
             if buddy:
                 with _bcol:
-                    _render_person(buddy, '#1a3a2a', '🎬', 'Dein Filmbuddy', show_agree=True)
+                    _render_person(buddy, '#1a3a2a', '🎬', 'Dein Filmbuddy', show_agree=True, person_color='#4caf50')
             if frenemy:
                 with _fcol:
-                    _render_person(frenemy, '#3a1a1a', '😈', 'Dein Frenemy', show_agree=not _same)
+                    _render_person(frenemy, '#3a1a1a', '😈', 'Dein Frenemy', show_agree=not _same, person_color='#e84545')
                     if _same:
                         st.caption('Noch zu wenige Vergleichspersonen — mit mehr Nutzern bekommst du einen echten Frenemy.')
 

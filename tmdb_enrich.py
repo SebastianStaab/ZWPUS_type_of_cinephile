@@ -293,7 +293,11 @@ def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None, api_
 
     new_entries = 0
     total = len(df)
-    print(f'  enrich_letterboxd: {total} Filme, api_key={api_key[:8]}..., cache_path={cache_path}')
+    n_uncached = sum(
+        1 for _, row in df.iterrows()
+        if _cache_key(row.get('title', ''), row.get('year', 0)) not in cache
+    )
+    print(f'  enrich_letterboxd: {total} Filme, {n_uncached} nicht im Cache, api_key={api_key[:8]}...')
 
     for i, (idx, row) in enumerate(df.iterrows()):
         key = _cache_key(row.get('title', ''), row.get('year', 0))
@@ -304,15 +308,19 @@ def enrich_letterboxd(df, api_key, cache_path=CACHE_FILE, progress_cb=None, api_
             new_entries += 1
             if new_entries % 20 == 0:
                 save_cache(cache, cache_path)
-
-        if progress_cb:
-            progress_cb(i + 1, total)
-        if new_entries > 0 and new_entries % 5 == 0:
-            time.sleep(0.1)  # kurze Pause gegen Rate-Limiting
+            # progress_cb nur bei echten API-Calls → kein DOM-Spam für Cache-Hits
+            if progress_cb:
+                progress_cb(new_entries, n_uncached)
+            if new_entries % 5 == 0:
+                time.sleep(0.1)  # kurze Pause gegen Rate-Limiting
 
     if new_entries > 0:
         save_cache(cache, cache_path)  # silent on error
         print(f'  TMDB: {new_entries} neue Einträge verarbeitet (gesamt im RAM: {len(cache)})')
+
+    # Einmal am Ende signalisieren: done — schließt die Progress-Bar
+    if progress_cb:
+        progress_cb(total, total)
 
     # Merge cache into df
     def get_field(row, field):
