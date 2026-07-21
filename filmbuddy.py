@@ -262,7 +262,7 @@ def find_buddy(user_id: str, df: pd.DataFrame) -> dict:
             _cbd: dict[str, float] = {}
             # epoche: mittleres Filmalter (same metric as compute_dimensions D4)
             if _byears:
-                _cbd['epoche'] = float(sum(2025 - y for y in _byears) / len(_byears))
+                _cbd['epoche'] = float(sum(datetime.now().year - y for y in _byears) / len(_byears))
             # meinungsstaerke (MSE der eigenen Ratings um den Mittelwert)
             if len(_bvals) >= 5:
                 _bm = float(np.mean(_bvals))
@@ -691,7 +691,7 @@ def compare_with_user(my_df, target_display_name: str) -> dict:
                 pass
         _cbd: dict = {}
         if _byears:
-            _cbd['epoche'] = float(sum(2025 - y for y in _byears) / len(_byears))
+            _cbd['epoche'] = float(sum(datetime.now().year - y for y in _byears) / len(_byears))
         if len(_bvals) >= 5:
             _bm = float(np.mean(_bvals))
             _cbd['meinungsstaerke'] = float(np.mean([(v - _bm)**2 for v in _bvals]))

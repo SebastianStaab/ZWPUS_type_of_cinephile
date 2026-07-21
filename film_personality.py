@@ -1260,7 +1260,7 @@ def save_dimension_detail_charts(name, df, dims, out_path):
     if not gdf.empty:
         overall_avg = df['user_rating'].mean()
         genre_stats = gdf.groupby('genre').agg(n=('user_rating','count'), avg=('user_rating','mean'))
-        genre_stats = genre_stats[genre_stats['n'] >= 5].copy()
+        genre_stats = genre_stats[genre_stats['n'] >= 3].copy()
         genre_stats['diff'] = genre_stats['avg'] - overall_avg
         genre_stats = genre_stats.sort_values('diff').tail(12)  # top 12 by diff
         colors = [COLOR_P if v >= 0 else COLOR_N for v in genre_stats['diff']]
@@ -1295,6 +1295,34 @@ def save_dimension_detail_charts(name, df, dims, out_path):
     print(f'  Detail-Charts gespeichert: {out_path}')
 
 
+def _normalize_dim(key: str, score) -> float:
+    """Normiert einen Dimensions-Rohwert auf [0, 1] für Radar-Charts.
+    Einzige Quelle der Wahrheit — wird von save_radar_chart und
+    save_comparison_radar gleichermaßen genutzt."""
+    if score is None:
+        return 0.5
+    score = float(score)
+    if key == 'bewertungsstil':
+        # Δ(user − imdb), ca. −3 bis +3; streng (negativ) = außen
+        return max(0.0, min(1.0, (-score + 3) / 6))
+    elif key == 'meinungsstaerke':
+        # MSE(user − IMDB), ca. 0–9
+        return max(0.0, min(1.0, score / 9.0))
+    elif key == 'geschmacksbreite':
+        # normierte Entropie [0, 1]
+        return max(0.0, min(1.0, score))
+    elif key == 'epoche':
+        # Legacy: score > 100 → altes Medianjahr-Format (z.B. 2015)
+        if score > 100:
+            return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
+        # Neues Format: mean_age in Jahren; 45 = max Klassiker
+        return max(0.0, min(1.0, score / 45.0))
+    elif key == 'publikum':
+        # Blockbuster-adj − Arthouse-adj, Bereich ±1.0
+        return max(0.0, min(1.0, 1.0 - (score + 1.0) / 2.0))
+    return 0.5
+
+
 def save_radar_chart(name, dims, out_path):
     """
     Radar-Chart der 4 Persönlichkeitsdimensionen.
@@ -1309,33 +1337,10 @@ def save_radar_chart(name, dims, out_path):
     import matplotlib.pyplot as plt
     import numpy as np
 
-    # Dimension → normierter Score [0, 1]
     def norm_score(key, dims):
         if key not in dims:
             return 0.5
-        score = dims[key]['score']
-        if key == 'bewertungsstil':
-            # score ist Δ(user - imdb), Bereich ca. -3 bis +3
-            # streng (negativ) = außen (1), mild (positiv) = innen (0)
-            return max(0.0, min(1.0, (-score + 3) / 6))
-        elif key == 'meinungsstaerke':
-            # score ist MSE(user−IMDB), Bereich ca. 0 bis 9 (RMSE≈3 = extreme Abweichung)
-            return max(0.0, min(1.0, score / 9.0))
-        elif key == 'geschmacksbreite':
-            # score ist normierte Entropie [0, 1]
-            return max(0.0, min(1.0, score))
-        elif key == 'epoche':
-            # Legacy: score > 100 → altes Medianjahr-Format (z.B. 2015)
-            if score > 100:
-                return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
-            # Neues Format: mean_age in Jahren; 45 Jahre = max Klassiker
-            return max(0.0, min(1.0, score / 45.0))
-        elif key == 'publikum':
-            # score: Blockbuster-adj − Arthouse-adj
-            # Tighter range ±1.0 statt ±2.0 → Unterschiede besser sichtbar
-            # außen = Arthouse (negativ), innen = Blockbuster (positiv)
-            return max(0.0, min(1.0, 1.0 - (score + 1.0) / 2.0))
-        return 0.5
+        return _normalize_dim(key, dims[key]['score'])
 
     _dim_cfg = [
         ('bewertungsstil',   'Streng\n(Bewertungsstil)',   'Mild'),
@@ -1367,9 +1372,9 @@ def save_radar_chart(name, dims, out_path):
         ax.text(angle, 0.08, clabel, ha='center', va='center',
                 fontsize=10, color='grey')
 
-    ax.fill(angles, scores_plot, color='#4fc3f7', alpha=0.25)
-    ax.plot(angles, scores_plot, color='#4fc3f7', lw=2.5)
-    ax.scatter(angles[:-1], scores, color='#4fc3f7', s=60, zorder=5)
+    ax.fill(angles, scores_plot, color='#e84545', alpha=0.25)
+    ax.plot(angles, scores_plot, color='#e84545', lw=2.5)
+    ax.scatter(angles[:-1], scores, color='#e84545', s=60, zorder=5)
 
     ax.set_title(f'Filmpersoenlichkeit: {name}', size=13, pad=20, fontweight='bold')
     plt.tight_layout()
@@ -1459,6 +1464,79 @@ def print_report(name, df, dims, bonus, genre_ach, insider, progressive, topflop
     print(f'\n{sep}\n')
 
 
+def save_comparison_radar(name, dims, others, out_path):
+    """Vergleichs-Radar: User (rot) + beliebig viele andere.
+    others: list of (label, dims_raw_dict, color, linestyle)
+    Returns False wenn zu wenige Dims vorhanden."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    def _norm(key, score):
+        if score is None:
+            return None
+        return _normalize_dim(key, score)
+
+    _all_cfg = [
+        ('bewertungsstil',   'Streng',      'Mild'),
+        ('meinungsstaerke',  'Polarisierer','Diplomat'),
+        ('geschmacksbreite', 'Omnivore',    'Spezialist'),
+        ('epoche',           'Klassiker',   'Zeitgeist'),
+        ('publikum',         'Arthouse',    'Blockbuster'),
+    ]
+    cfg = [(k, lo, hi) for k, lo, hi in _all_cfg if k in dims]
+    if len(cfg) < 3:
+        return False
+
+    def _raw(d, k):
+        v = d.get(k)
+        if v is None:
+            return None
+        return v['score'] if isinstance(v, dict) else v
+
+    n      = len(cfg)
+    angles = [i * 2 * 3.14159265 / n for i in range(n)] + [0]
+
+    fig, ax = plt.subplots(figsize=(3.8, 3.8), subplot_kw=dict(polar=True))
+    fig.patch.set_facecolor('#0e1117')
+    ax.set_facecolor('#111827')
+
+    for r in [0.25, 0.5, 0.75, 1.0]:
+        ax.plot(angles, [r]*(n+1), color='grey', lw=0.4, alpha=0.35)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels([lo for _, lo, _ in cfg], size=9, color='#ccc')
+    ax.set_yticklabels([])
+    ax.set_ylim(0, 1)
+
+    # User
+    my_sc = [_norm(k, _raw(dims, k)) for k, _, _ in cfg]
+    mp    = my_sc + [my_sc[0]]
+    ax.fill(angles, mp, color='#e84545', alpha=0.22)
+    ax.plot(angles, mp, color='#e84545', lw=2.5, label=name)
+    ax.scatter(angles[:-1], my_sc, color='#e84545', s=55, zorder=5)
+
+    # Others (buddy, frenemy, …)
+    for o_label, o_raw, o_color, o_ls in others:
+        o_sc = [_norm(k, o_raw.get(k)) if o_raw else None for k, _, _ in cfg]
+        o_sc = [v if v is not None else 0.5 for v in o_sc]
+        op   = o_sc + [o_sc[0]]
+        ax.fill(angles, op, color=o_color, alpha=0.12)
+        ax.plot(angles, op, color=o_color, lw=2.0, linestyle=o_ls, label=o_label)
+        ax.scatter(angles[:-1], o_sc, color=o_color, s=40, zorder=4)
+
+    ax.legend(loc='upper right', fontsize=8, framealpha=0.25,
+              labelcolor='white', facecolor='#1a1a2e')
+    title = name + ''.join(f'  vs.  {o[0]}' for o in others)
+    ax.set_title(title, size=10, pad=18, fontweight='bold', color='white')
+
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=140, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return True
+
 def main():
     import sys
     args = [a for a in sys.argv[1:] if a != '--verbose']
@@ -1507,88 +1585,3 @@ def main():
 if __name__ == '__main__':
     main()
 
-
-def save_comparison_radar(name, dims, others, out_path):
-    """Vergleichs-Radar: User (rot) + beliebig viele andere.
-    others: list of (label, dims_raw_dict, color, linestyle)
-    Returns False wenn zu wenige Dims vorhanden."""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    def _norm(key, score):
-        if score is None:
-            return None
-        if key == 'bewertungsstil':
-            return max(0.0, min(1.0, (-score + 3) / 6))
-        elif key == 'meinungsstaerke':
-            return max(0.0, min(1.0, score / 9.0))
-        elif key == 'geschmacksbreite':
-            return max(0.0, min(1.0, score))
-        elif key == 'epoche':
-            if score > 100:  # Legacy: altes Medianjahr-Format (z.B. 2015)
-                return max(0.0, min(1.0, 1.0 - (score - 1960) / 65))
-            return max(0.0, min(1.0, score / 45.0))  # mean_age: 0=Zeitgeist, 45=max Klassiker
-        elif key == 'publikum':
-            return max(0.0, min(1.0, 1.0 - (score + 1.0) / 2.0))
-        return 0.5
-
-    _all_cfg = [
-        ('bewertungsstil',   'Streng',      'Mild'),
-        ('meinungsstaerke',  'Polarisierer','Diplomat'),
-        ('geschmacksbreite', 'Omnivore',    'Spezialist'),
-        ('epoche',           'Klassiker',   'Zeitgeist'),
-        ('publikum',         'Arthouse',    'Blockbuster'),
-    ]
-    cfg = [(k, lo, hi) for k, lo, hi in _all_cfg if k in dims]
-    if len(cfg) < 3:
-        return False
-
-    def _raw(d, k):
-        v = d.get(k)
-        if v is None:
-            return None
-        return v['score'] if isinstance(v, dict) else v
-
-    n      = len(cfg)
-    angles = [i * 2 * 3.14159265 / n for i in range(n)] + [0]
-
-    fig, ax = plt.subplots(figsize=(3.8, 3.8), subplot_kw=dict(polar=True))
-    fig.patch.set_facecolor('#0e1117')
-    ax.set_facecolor('#111827')
-
-    for r in [0.25, 0.5, 0.75, 1.0]:
-        ax.plot(angles, [r]*(n+1), color='grey', lw=0.4, alpha=0.35)
-
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels([lo for _, lo, _ in cfg], size=9, color='#ccc')
-    ax.set_yticklabels([])
-    ax.set_ylim(0, 1)
-
-    # User
-    my_sc = [_norm(k, _raw(dims, k)) for k, _, _ in cfg]
-    mp    = my_sc + [my_sc[0]]
-    ax.fill(angles, mp, color='#4fc3f7', alpha=0.22)
-    ax.plot(angles, mp, color='#4fc3f7', lw=2.5, label=name)
-    ax.scatter(angles[:-1], my_sc, color='#4fc3f7', s=55, zorder=5)
-
-    # Others (buddy, frenemy, …)
-    for o_label, o_raw, o_color, o_ls in others:
-        o_sc = [_norm(k, o_raw.get(k)) if o_raw else None for k, _, _ in cfg]
-        o_sc = [v if v is not None else 0.5 for v in o_sc]
-        op   = o_sc + [o_sc[0]]
-        ax.fill(angles, op, color=o_color, alpha=0.12)
-        ax.plot(angles, op, color=o_color, lw=2.0, linestyle=o_ls, label=o_label)
-        ax.scatter(angles[:-1], o_sc, color=o_color, s=40, zorder=4)
-
-    ax.legend(loc='upper right', fontsize=8, framealpha=0.25,
-              labelcolor='white', facecolor='#1a1a2e')
-    title = name + ''.join(f'  vs.  {o[0]}' for o in others)
-    ax.set_title(title, size=10, pad=18, fontweight='bold', color='white')
-
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=140, bbox_inches='tight',
-                facecolor=fig.get_facecolor())
-    plt.close(fig)
-    return True

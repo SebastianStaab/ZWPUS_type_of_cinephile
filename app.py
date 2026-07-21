@@ -136,7 +136,8 @@ def _update_cache_status(done=None, total=None):
     _n = 0
     for _cp in [_cpath_app, _cpath_tmp]:
         try:
-            _n = max(_n, len(_j.load(open(_cp))))
+            with open(_cp) as _f:
+                _n = max(_n, len(_j.load(_f)))
         except Exception:
             pass
     if done is not None and total:
@@ -470,7 +471,7 @@ if _fb.is_available() and st.session_state.get('fb_match') is not None:
             if frenemy and not _same:
                 _fd = frenemy.get('buddy_dims_raw') or frenemy.get('computed_buddy_dims')
                 if _fd:
-                    _others_radar.append((frenemy['name'], _fd, '#e84545', ':'))
+                    _others_radar.append((frenemy['name'], _fd, '#ff9800', ':'))
             if _others_radar:
                 _tri_path = '/tmp/triple_radar.png'
                 if save_comparison_radar(display_name, dims, _others_radar, _tri_path):
