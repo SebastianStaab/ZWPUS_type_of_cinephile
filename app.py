@@ -321,23 +321,13 @@ if _fb.is_available() and st.session_state.get('fb_save_triggered') and name.str
         st.error('Filmbuddy: Speichern fehlgeschlagen — Supabase nicht erreichbar.')
 
 # ── Filmbuddy-Kapitel (ganz oben) ────────────────────────────────
-if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is not None):
+if _fb.is_available() and st.session_state.get('fb_match') is not None:
     st.divider()
     st.subheader('🤝 Filmbuddy')
     if st.session_state.get('fb_save_ok'):
         st.success(f"✅ {st.session_state.pop('fb_save_ok')} Ratings gespeichert!")
-    # ── Nutzer-Auswahl für Vergleich ──────────────────────────────
-    _cmp_selected = None
-    if df is not None:
-        _cmp_all = [n for n in _fb.get_all_display_names() if n != (name.strip() or '___')]
-        if _cmp_all:
-            _cmp_raw = st.selectbox('🔍 Person zum Vergleich:', ['— auswählen —'] + _cmp_all, key='cmp_select')
-            _cmp_selected = None if _cmp_raw == '— auswählen —' else _cmp_raw
     _match = st.session_state.get('fb_match')
-    if _match is None:
-        if not _cmp_selected:
-            st.info('💾 CSV hochladen und im Filmbuddy-Pool speichern, um automatischen Buddy & Frenemy zu sehen.')
-    elif not _match or _match.get('total_users', 0) == 0:
+    if not _match or _match.get('total_users', 0) == 0:
         st.info('Noch zu wenige Nutzer mit Überschneidungen. Schick den Link an die Community! 🎬')
         _dpu0 = _match.get('debug_per_user', {}) if _match else {}
         if _dpu0:
@@ -349,23 +339,8 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
         buddy   = _match.get('buddy')
         frenemy = _match.get('frenemy')
         _same   = buddy and frenemy and buddy['name'] == frenemy['name']
-        # Gemeinsamer Radar: Du + Buddy + Frenemy
-        _others_radar = []
-        if buddy:
-            _bd = buddy.get('buddy_dims_raw') or buddy.get('computed_buddy_dims')
-            if _bd:
-                _others_radar.append((buddy['name'], _bd, '#4caf50', '--'))
-        if frenemy and not _same:
-            _fd = frenemy.get('buddy_dims_raw') or frenemy.get('computed_buddy_dims')
-            if _fd:
-                _others_radar.append((frenemy['name'], _fd, '#e84545', ':'))
-        if _others_radar:
-            _tri_path = '/tmp/triple_radar.png'
-            if save_comparison_radar(display_name, dims, _others_radar, _tri_path):
-                st.image(_tri_path, width='stretch')
 
-        _bcol, _fcol = st.columns(2)
-
+        # ── Hilfsfunktionen ─────────────────────────────────────────
         def _corr_to_pct(r):
             return int(round((r + 1) / 2 * 100))
 
@@ -384,7 +359,6 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
             st.dataframe(_df_t, width='stretch', hide_index=True)
 
         def _rating_histogram(my_ratings_all, buddy_ratings_all, buddy_name):
-            """Verteilung: Wie streng bewertet ihr beide generell?"""
             if not buddy_ratings_all:
                 return
             import numpy as np
@@ -392,10 +366,8 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
             _fig, _ax = plt.subplots(figsize=(5, 2.8))
             _fig.patch.set_facecolor('#0e1117')
             _ax.set_facecolor('#0e1117')
-            _ax.hist(my_ratings_all, bins=_bins, alpha=0.65, color='#e84545',
-                     label='Du', density=True)
-            _ax.hist(buddy_ratings_all, bins=_bins, alpha=0.55, color='#4fc3f7',
-                     label=buddy_name, density=True)
+            _ax.hist(my_ratings_all, bins=_bins, alpha=0.65, color='#e84545', label='Du', density=True)
+            _ax.hist(buddy_ratings_all, bins=_bins, alpha=0.55, color='#4fc3f7', label=buddy_name, density=True)
             _ax.set_xlabel('Bewertung', color='white', fontsize=9)
             _ax.set_ylabel('Anteil', color='white', fontsize=9)
             _ax.set_xlim(0.5, 10.5)
@@ -421,27 +393,17 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
             _m1.metric('Match-Score', f'{_pct}%',
                        help='(Pearson r + 1) / 2 × 100 — 100% = identischer Geschmack')
             _m2.metric('Gemeinsame Filme', person['n'])
-
-            # Bewertungsverteilung
             _my_all = df['user_rating'].dropna().tolist()
             _rating_histogram(_my_all, person.get('buddy_all_ratings', []), person['name'])
-
-            # Deal Breaker
             if person.get('dealbreaker'):
-                st.markdown(f'**💔 Deal Breaker** *(Differenz ≥ 5 Punkte)*')
+                st.markdown('**💔 Deal Breaker** *(Differenz ≥ 5 Punkte)*')
                 _render_table(person['dealbreaker'], 'Du', person['name'])
-
-            # Beide lieben
             if show_agree and person.get('top_agree'):
-                st.markdown(f'**🍿 Ihr liebt beide**')
+                st.markdown('**🍿 Ihr liebt beide**')
                 _render_table(person['top_agree'], 'Du', person['name'])
-
-            # Meinungsverschiedenheiten
             if person.get('top_diff'):
-                st.markdown(f'**🔀 Größte Meinungsverschiedenheiten**')
+                st.markdown('**🔀 Größte Meinungsverschiedenheiten**')
                 _render_table(person['top_diff'], 'Du', person['name'])
-
-            # Erster gemeinsamer Kinoabend
             if person.get('kinoabend'):
                 _kb = person['kinoabend']
                 _kb_title = str(_kb[0]).title() if isinstance(_kb, (list, tuple)) else str(_kb)
@@ -455,8 +417,6 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
                     f"</div>",
                     unsafe_allow_html=True
                 )
-
-            # Unseen Gem
             if person.get('unseen_gem'):
                 _ug_title  = str(person['unseen_gem'][0]).title()
                 _ug_rating = f"{float(person['unseen_gem'][1]):.0f}"
@@ -468,8 +428,6 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
                     f"</div>",
                     unsafe_allow_html=True
                 )
-
-            # Genre-Overlap
             if person.get('top_genres'):
                 _genres_str = ' · '.join(g for g, _ in person['top_genres'])
                 st.markdown(
@@ -480,28 +438,15 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
                     unsafe_allow_html=True
                 )
 
+        # ── Nutzer-Auswahl ─────────────────────────────────────────────
+        _cmp_all = [n for n in _fb.get_all_display_names() if n != (name.strip() or '___')]
+        _cmp_selected = None
+        if _cmp_all:
+            _cmp_raw = st.selectbox('🔍 Person zum Vergleich:', ['— auswählen —'] + _cmp_all, key='cmp_select')
+            _cmp_selected = None if _cmp_raw == '— auswählen —' else _cmp_raw
 
-
-        if buddy:
-            with _bcol:
-                _render_person(buddy, '#1a3a2a', '🎬', 'Dein Filmbuddy', show_agree=True)
-
-        if frenemy:
-            with _fcol:
-                _render_person(frenemy, '#3a1a1a', '😈', 'Dein Frenemy', show_agree=not _same)
-                if _same:
-                    st.caption('Noch zu wenige Vergleichspersonen — mit mehr Nutzern bekommst du einen echten Frenemy.')
-
-        # Debug: Gemeinsame Filme pro Nutzer (zusammenklappbar)
-        _dpu = _match.get('debug_per_user', {})
-        if _dpu:
-            with st.expander('🔍 Gemeinsame Filme pro Nutzer', expanded=False):
-                for _uname, _n in sorted(_dpu.items(), key=lambda x: x[1], reverse=True):
-                    _flag = ' ✅' if _n >= 3 else ' ⚠️ (< 3, kein Match)'
-                    st.write(f'**{_uname}**: {_n} gemeinsame Filme{_flag}')
-
-        # ── Manueller Vergleich ──────────────────────────────────
         if _cmp_selected:
+            # ── Manueller Vergleich mit gewähltem Nutzer ──────────────────────
             with st.spinner(f'Vergleiche mit {_cmp_selected}…'):
                 _cmp_result = _fb.compare_with_user(df, _cmp_selected)
             if not _cmp_result:
@@ -509,8 +454,45 @@ if _fb.is_available() and (st.session_state.get('fb_match') is not None or df is
             elif _cmp_result.get('too_few'):
                 st.info(f'Nur {_cmp_result["n"]} gemeinsame Filme mit {_cmp_selected} — mindestens 3 nötig.')
             else:
-                st.markdown(f'---')
+                _cmp_dims = _cmp_result.get('buddy_dims_raw') or _cmp_result.get('computed_buddy_dims')
+                if _cmp_dims:
+                    _cmp_radar_path = '/tmp/cmp_radar.png'
+                    if save_comparison_radar(display_name, dims, [(_cmp_selected, _cmp_dims, '#4fc3f7', '--')], _cmp_radar_path):
+                        st.image(_cmp_radar_path, width='stretch')
                 _render_person(_cmp_result, '#1a2a3a', '🔍', f'Vergleich: {_cmp_selected}', show_agree=True)
+        else:
+            # ── Auto: Buddy & Frenemy ───────────────────────────────────────────────────
+            _others_radar = []
+            if buddy:
+                _bd = buddy.get('buddy_dims_raw') or buddy.get('computed_buddy_dims')
+                if _bd:
+                    _others_radar.append((buddy['name'], _bd, '#4caf50', '--'))
+            if frenemy and not _same:
+                _fd = frenemy.get('buddy_dims_raw') or frenemy.get('computed_buddy_dims')
+                if _fd:
+                    _others_radar.append((frenemy['name'], _fd, '#e84545', ':'))
+            if _others_radar:
+                _tri_path = '/tmp/triple_radar.png'
+                if save_comparison_radar(display_name, dims, _others_radar, _tri_path):
+                    st.image(_tri_path, width='stretch')
+            _bcol, _fcol = st.columns(2)
+            if buddy:
+                with _bcol:
+                    _render_person(buddy, '#1a3a2a', '🎬', 'Dein Filmbuddy', show_agree=True)
+            if frenemy:
+                with _fcol:
+                    _render_person(frenemy, '#3a1a1a', '😈', 'Dein Frenemy', show_agree=not _same)
+                    if _same:
+                        st.caption('Noch zu wenige Vergleichspersonen — mit mehr Nutzern bekommst du einen echten Frenemy.')
+
+        # Debug: Gemeinsame Filme pro Nutzer
+        _dpu = _match.get('debug_per_user', {})
+        if _dpu:
+            with st.expander('🔍 Gemeinsame Filme pro Nutzer', expanded=False):
+                for _uname, _n in sorted(_dpu.items(), key=lambda x: x[1], reverse=True):
+                    _flag = ' ✅' if _n >= 3 else ' ⚠️ (< 3, kein Match)'
+                    st.write(f'**{_uname}**: {_n} gemeinsame Filme{_flag}')
+
 
 # ── Achievements (ganz oben) ─────────────────────────────────────
 all_ach = progressive + bonus + genre_ach + insider
